@@ -20,7 +20,7 @@ impl Execution {
     }
 
     fn sc_per_location(&self) -> bool {
-        self.asyclic(|event_id| {
+        self.acyclic(|event_id| {
             self.po(event_id)
                 .chain(self.rf(event_id))
                 .chain(self.mo(event_id))
@@ -32,7 +32,7 @@ impl Execution {
     }
 
     fn external_coherence(&self) -> bool {
-        self.asyclic(|event_id| {
+        self.acyclic(|event_id| {
             let thread = self.thread_of(event_id);
             self.dob(event_id).chain(
                 self.rf(event_id)
@@ -79,7 +79,7 @@ impl Execution {
             .unwrap_or_else(|e| e - 1)
     }
 
-    fn asyclic<I>(&self, successors: impl Fn(EventId) -> I) -> bool
+    fn acyclic<I>(&self, successors: impl Fn(EventId) -> I) -> bool
     where
         I: Iterator<Item = EventId>,
     {
@@ -99,6 +99,7 @@ impl Execution {
                     continue;
                 }
 
+                visiting.insert(event_id);
                 stack.push((event_id, true));
                 for succ in successors(event_id) {
                     if visiting.contains(succ) {
@@ -108,7 +109,6 @@ impl Execution {
                     }
                     stack.push((succ, false));
                 }
-                visiting.insert(event_id);
             }
         }
         true
