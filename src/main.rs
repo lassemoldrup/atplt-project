@@ -2,6 +2,22 @@ use std::collections::HashMap;
 
 use roaring::RoaringBitmap;
 
+struct Event {
+    location: Location,
+    value: Value,
+    event_type: EventType,
+}
+
+enum EventType {
+    Read,
+    Write,
+}
+
+type Value = u64;
+type Location = usize;
+type EventId = u32;
+type Relation = HashMap<EventId, RoaringBitmap>;
+
 /// A (partial) exection graph.
 struct Execution {
     num_locations: usize,
@@ -114,22 +130,6 @@ impl Execution {
         true
     }
 }
-
-struct Event {
-    location: Location,
-    value: Value,
-    event_type: EventType,
-}
-
-enum EventType {
-    Read,
-    Write,
-}
-
-type Value = u64;
-type Location = usize;
-type EventId = u32;
-type Relation = HashMap<EventId, RoaringBitmap>;
 
 fn main() {
     println!("Hello, world!");
