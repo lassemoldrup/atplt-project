@@ -1,82 +1,24 @@
 use std::collections::HashMap;
-use std::{iter, option};
 
 use itertools::Itertools;
+use relations::{PartialOrder, Relation, TotalOrder, TotalOrderUnion};
 use roaring::RoaringBitmap;
 
-type Location = usize;
-type EventId = u32;
-type Relation = HashMap<EventId, RoaringBitmap>;
+mod relations;
+
+pub type Location = usize;
+pub type EventId = u32;
 
 #[derive(Clone, Copy)]
-struct Event {
+pub struct Event {
     location: Location,
     event_type: EventType,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum EventType {
+pub enum EventType {
     Read,
     Write,
-}
-
-trait PartialOrder {
-    type Iter<'a>: Iterator<Item = EventId>
-    where
-        Self: 'a;
-    fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> Self::Iter<'a>;
-}
-
-impl PartialOrder for Relation {
-    type Iter<'a> = iter::Flatten<option::IntoIter<&'a RoaringBitmap>>;
-
-    fn get<'a>(&'a self, event_id: EventId, _: &[Event]) -> Self::Iter<'a> {
-        self.get(&event_id).into_iter().flatten()
-    }
-}
-
-#[derive(Clone)]
-struct TotalOrder {
-    order: Vec<EventId>,
-    indices: HashMap<EventId, usize>,
-}
-
-impl TotalOrder {
-    fn new(order: Vec<EventId>) -> Self {
-        let indices = order
-            .iter()
-            .enumerate()
-            .map(|(i, &event_id)| (event_id, i))
-            .collect();
-        Self { order, indices }
-    }
-}
-
-impl PartialOrder for TotalOrder {
-    type Iter<'a> = iter::Copied<iter::Flatten<option::IntoIter<&'a [EventId]>>>;
-
-    fn get<'a>(&'a self, event_id: EventId, _: &[Event]) -> Self::Iter<'a> {
-        self.indices
-            .get(&event_id)
-            .map(|&i| &self.order[i + 1..])
-            .into_iter()
-            .flatten()
-            .copied()
-    }
-}
-
-#[derive(Clone, Default)]
-struct TotalOrderUnion {
-    orders: Vec<TotalOrder>,
-}
-
-impl PartialOrder for TotalOrderUnion {
-    type Iter<'a> = <TotalOrder as PartialOrder>::Iter<'a>;
-
-    fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> Self::Iter<'a> {
-        let loc = events[event_id as usize].location;
-        self.orders[loc].get(event_id, events)
-    }
 }
 
 /// A (partial) exection graph.
