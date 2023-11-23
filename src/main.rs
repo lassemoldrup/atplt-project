@@ -144,17 +144,14 @@ where
     fn sc_per_location(&self) -> bool {
         self.acyclic(|event_id| {
             let loc = self.events[event_id as usize].location;
-            self.rf(event_id)
+            // TODO: We could use the fact that the PO is a total order to
+            // reduce the number of edges we need to check. Problem: the last
+            // initial write has multiple direct PO successors.
+            self.po(event_id)
+                .chain(self.rf(event_id))
                 .chain(self.mo(event_id))
                 .chain(self.fr(event_id))
                 .filter(move |&e2| self.events[e2 as usize].location == loc)
-                .chain(
-                    // For acyclicity we only need the first po edge to a
-                    // same location successor
-                    self.po(event_id)
-                        .find(|&e2| self.events[e2 as usize].location == loc)
-                        .into_iter(),
-                )
         })
     }
 
