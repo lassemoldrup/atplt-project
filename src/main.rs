@@ -190,6 +190,9 @@ where
 impl Execution<TotalOrderUnion> {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
         // Generate all possible total orders for each location
+        // TODO: Don't generate orders going against the PO. We could also
+        // check SC per location for each total order only once, instead
+        // of checking it repeatedly for each combination of total orders.
         let mut mos = vec![];
         for loc in 0..self.num_locations {
             let writes = self
