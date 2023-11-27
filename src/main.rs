@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
-use relations::{PartialOrder, Relation, TotalOrder, TotalOrderUnion};
+use relations::{EventRelation, Relation, TotalOrder, TotalOrderUnion};
 use roaring::RoaringBitmap;
 
+mod fenwick;
 mod relations;
 
 pub type Location = usize;
@@ -27,15 +28,15 @@ struct Execution<Mo> {
     /// The events in the execution, in program order.
     events: Vec<Event>,
     thread_starts: Vec<EventId>,
-    rf: Relation,
+    rf: EventRelation,
     inverse_rf: HashMap<EventId, EventId>,
-    dob: Relation,
+    dob: EventRelation,
     mo: Mo,
 }
 
 impl<Mo> Execution<Mo>
 where
-    Mo: PartialOrder,
+    Mo: Relation,
 {
     fn new(threads: &[Vec<Event>], num_locations: usize, mo: Mo) -> Self {
         // Initial writes
@@ -63,9 +64,9 @@ where
             num_locations,
             events,
             thread_starts,
-            rf: Relation::new(),
+            rf: EventRelation::new(),
             inverse_rf: HashMap::new(),
-            dob: Relation::new(),
+            dob: EventRelation::new(),
             mo,
         }
     }
@@ -261,11 +262,29 @@ mod tests {
         // Set dob = po to get SC
         // Initial writes
         exec.add_dob(0, 1);
-        // Rest of the events
+        exec.add_dob(0, 2);
+        exec.add_dob(0, 3);
+        exec.add_dob(0, 4);
+        exec.add_dob(0, 5);
         exec.add_dob(1, 2);
-        exec.add_dob(2, 3);
+        exec.add_dob(1, 3);
         exec.add_dob(1, 4);
+        exec.add_dob(1, 5);
+        // Rest of the events
+        exec.add_dob(2, 3);
         exec.add_dob(4, 5);
+        exec
+    }
+
+    fn store_buffer_tso_execution() -> Execution<TotalOrderUnion> {
+        let mut exec = store_buffer_execution();
+        // Set dob = po \ [W]; [R] to get TSO
+        // Initial writes
+        exec.add_dob(0, 1);
+        exec.add_dob(0, 2);
+        exec.add_dob(0, 4);
+        exec.add_dob(1, 2);
+        exec.add_dob(1, 4);
         exec
     }
 
@@ -324,6 +343,7 @@ mod tests {
         let mut exec = store_buffer_sc_execution();
         exec.add_rf(0, 5);
         exec.add_rf(4, 3);
+
         assert!(exec.is_totally_consistent().is_some());
     }
 
@@ -334,6 +354,15 @@ mod tests {
         exec.add_rf(1, 3);
 
         assert!(exec.is_totally_consistent().is_none());
+    }
+
+    #[test]
+    fn store_buffer_tso_consistent_total() {
+        let mut exec = store_buffer_tso_execution();
+        exec.add_rf(0, 5);
+        exec.add_rf(1, 3);
+
+        assert!(exec.is_totally_consistent().is_some())
     }
 }
 

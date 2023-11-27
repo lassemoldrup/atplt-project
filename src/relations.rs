@@ -5,16 +5,16 @@ use roaring::RoaringBitmap;
 
 use crate::{Event, EventId};
 
-pub type Relation = HashMap<EventId, RoaringBitmap>;
+pub type EventRelation = HashMap<EventId, RoaringBitmap>;
 
-pub trait PartialOrder {
+pub trait Relation {
     type Iter<'a>: Iterator<Item = EventId>
     where
         Self: 'a;
     fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> Self::Iter<'a>;
 }
 
-impl PartialOrder for Relation {
+impl Relation for EventRelation {
     type Iter<'a> = iter::Flatten<option::IntoIter<&'a RoaringBitmap>>;
 
     fn get<'a>(&'a self, event_id: EventId, _: &[Event]) -> Self::Iter<'a> {
@@ -39,7 +39,7 @@ impl TotalOrder {
     }
 }
 
-impl PartialOrder for TotalOrder {
+impl Relation for TotalOrder {
     type Iter<'a> = iter::Copied<iter::Flatten<option::IntoIter<&'a [EventId]>>>;
 
     fn get<'a>(&'a self, event_id: EventId, _: &[Event]) -> Self::Iter<'a> {
@@ -57,8 +57,8 @@ pub struct TotalOrderUnion {
     pub orders: Vec<TotalOrder>,
 }
 
-impl PartialOrder for TotalOrderUnion {
-    type Iter<'a> = <TotalOrder as PartialOrder>::Iter<'a>;
+impl Relation for TotalOrderUnion {
+    type Iter<'a> = <TotalOrder as Relation>::Iter<'a>;
 
     fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> Self::Iter<'a> {
         let loc = events[event_id as usize].location;
