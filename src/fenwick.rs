@@ -1,6 +1,7 @@
 use itertools::Itertools;
 
 /// A generic minimum suffix Fenwick tree.
+#[derive(Clone)]
 pub struct MinFenwickTree<T> {
     data: Vec<T>,
     values: Vec<T>,
@@ -27,14 +28,6 @@ where
         Self { data, values }
     }
 
-    /// Returns the value at index `i`.
-    ///
-    /// # Panics
-    /// Panics if `i >= n`.
-    pub fn get(&self, i: usize) -> T {
-        self.values[i]
-    }
-
     /// Returns the minimum value in the range `[i, n)`, where `n` is the length
     /// of the original sequence.
     ///
@@ -52,20 +45,23 @@ where
         res
     }
 
-    /// Updates the value at index `i` to `val`. `val` must be less than the
-    /// current value.
+    /// Updates the value at index `i` to `val` if `val` is less than the curret
+    /// value. Returns `true` if the value was updated.
     ///
     /// # Panics
-    /// Panics if `i >= n` or `val` is greater than the current value at index
-    /// `i`.
-    pub fn update(&mut self, i: usize, val: T) {
-        assert!(self.values[i] >= val);
+    /// Panics if `i >= n`.
+    pub fn update(&mut self, i: usize, val: T) -> bool {
+        if val >= self.values[i] {
+            return false;
+        }
+
         self.values[i] = val;
         let mut i = self.data.len() - i - 1;
         while i < self.data.len() {
             self.data[i] = self.data[i].min(val);
             i |= i + 1;
         }
+        true
     }
 
     /// Returns the largest index of a value less than or equal to `val`, or
