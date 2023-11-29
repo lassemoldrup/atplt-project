@@ -174,11 +174,11 @@ impl Relation for PartialOrder {
 
     fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> Self::Iter<'a> {
         let (i, j) = self.to_thread_index(event_id);
-        let thread_start = self.thread_starts[i];
+        let thread_start = self.thread_starts[0];
         let last_thread_end = events.len() as EventId;
         let thread_end = self
             .thread_starts
-            .get(i + 1)
+            .get(1)
             .copied()
             .unwrap_or(last_thread_end);
         PartialOrderRelationIter {
@@ -192,6 +192,7 @@ impl Relation for PartialOrder {
     }
 }
 
+#[derive(Debug)]
 pub struct PartialOrderCycleError;
 
 pub struct PartialOrderRelationIter<'po> {
@@ -209,9 +210,9 @@ impl Iterator for PartialOrderRelationIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let (i1, j1) = self.start_event;
         let (i2, j2) = &mut self.current_event;
-        while self.thread_start + *j2 as u32 >= self.thread_end || *j2 == usize::MAX {
+        while *j2 == usize::MAX || self.thread_start + *j2 as u32 >= self.thread_end {
             *i2 += 1;
-            if *i2 == self.partial_order.edges.len() {
+            if *i2 >= self.partial_order.edges.len() {
                 return None;
             }
 
@@ -233,10 +234,14 @@ impl Iterator for PartialOrderRelationIter<'_> {
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
+
+    use crate::EventType;
+
     use super::*;
 
     #[test]
-    fn two_thread_test() {
+    fn partial_order_two_thread_test() {
         // Two thread with indices 0, 1, 2, || 3, 4, 5
         let mut partial_order = PartialOrder::new(vec![3, 3]);
         assert!(partial_order.query(0, 2));
@@ -272,7 +277,7 @@ mod test {
     }
 
     #[test]
-    fn three_thread_test() {
+    fn partial_order_three_thread_test() {
         // Three thread with indices 0, 1, 2, || 3, 4, 5, || 6, 7, 8
         let mut partial_order = PartialOrder::new(vec![3, 3, 3]);
         assert!(partial_order.query(0, 2));
@@ -305,5 +310,39 @@ mod test {
         assert!(partial_order.insert(8, 1).is_err());
         assert!(partial_order.insert(4, 0).is_err());
         assert!(partial_order.insert(4, 6).is_err());
+    }
+
+    #[test]
+    fn partial_order_iter_test() {
+        // Three thread with indices 0, 1, 2, || 3, 4, 5, || 6, 7, 8
+        let mut partial_order = PartialOrder::new(vec![3, 3, 3]);
+
+        // 0----->3 ||  6
+        //    ||--------^
+        // 1----^ 4<----7
+        //    ||    ||
+        // 2  ||  5---->8
+        partial_order.insert(0, 3).unwrap();
+        partial_order.insert(1, 6).unwrap();
+        partial_order.insert(7, 4).unwrap();
+        partial_order.insert(5, 8).unwrap();
+
+        let events = [Event {
+            location: 0,
+            event_type: EventType::Read,
+        }; 9];
+
+        assert_eq!(
+            partial_order.get(0, &events).collect_vec(),
+            (1..9).collect_vec()
+        );
+        assert_eq!(
+            partial_order.get(1, &events).collect_vec(),
+            vec![2, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(
+            partial_order.get(6, &events).collect_vec(),
+            vec![4, 5, 7, 8]
+        );
     }
 }
