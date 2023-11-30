@@ -1,10 +1,14 @@
+#![feature(impl_trait_in_fn_trait_return)]
+
 use std::collections::HashMap;
 
+use iter::Linearizations;
 use itertools::Itertools;
-use relations::{EventRelation, Relation, TotalOrder, TotalOrderUnion};
+use relations::{EventRelation, PartialOrder, Relation, TotalOrder, TotalOrderUnion};
 use roaring::RoaringBitmap;
 
 mod fenwick;
+mod iter;
 mod relations;
 
 pub type Location = usize;
@@ -22,8 +26,96 @@ pub enum EventType {
     Write,
 }
 
+pub trait Execution {
+    fn event(&self, event_id: EventId) -> Event;
+    fn num_events(&self) -> usize;
+    fn thread_of(&self, event_id: EventId) -> usize;
+    fn po(&self, event_id: EventId) -> impl Iterator<Item = EventId>;
+    fn rf(&self, event_id: EventId) -> impl Iterator<Item = EventId>;
+    fn dob(&self, event_id: EventId) -> impl Iterator<Item = EventId>;
+    fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId>;
+    fn inverse_rf(&self, event_id: EventId) -> Option<EventId>;
+
+    fn is_consistent(&self) -> bool {
+        self.sc_per_location() && self.external_coherence()
+    }
+
+    fn sc_per_location(&self) -> bool {
+        acyclic(self.num_events(), |e1| {
+            let loc = self.event(e1).location;
+            // TODO: We could use the fact that the PO is a total order to
+            // reduce the number of edges we need to check. Problem: the last
+            // initial write has multiple direct PO successors.
+            self.po(e1)
+                .chain(self.rf(e1))
+                .chain(self.mo(e1))
+                .chain(self.fr(e1))
+                .filter(move |&e2| self.event(e2).location == loc)
+        })
+    }
+
+    fn external_coherence(&self) -> bool {
+        acyclic(self.num_events(), |e1| {
+            let thread = self.thread_of(e1);
+            self.dob(e1).chain(
+                self.rf(e1)
+                    .chain(self.mo(e1))
+                    .chain(self.fr(e1))
+                    // External edges go between threads, except if going from the
+                    // special initial writes thread
+                    .filter(move |&e2| thread == 0 || self.thread_of(e2) != thread),
+            )
+        })
+    }
+
+    fn fr(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        self.inverse_rf(event_id)
+            .into_iter()
+            .flat_map(|w| self.mo(w))
+    }
+}
+
+pub trait CheckableExecution: Execution {
+    fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion>;
+}
+
+fn acyclic<I>(num_events: usize, successors: impl Fn(EventId) -> I) -> bool
+where
+    I: IntoIterator<Item = EventId>,
+{
+    let mut visited = RoaringBitmap::new();
+    let mut visiting = RoaringBitmap::new();
+    let mut stack = vec![];
+    for event_id in 0..num_events as EventId {
+        if visited.contains(event_id) {
+            continue;
+        }
+
+        stack.push((event_id, false));
+        while let Some((event_id, backtracking)) = stack.pop() {
+            if backtracking {
+                visited.insert(event_id);
+                visiting.remove(event_id);
+                continue;
+            }
+
+            visiting.insert(event_id);
+            stack.push((event_id, true));
+            for succ in successors(event_id) {
+                if visiting.contains(succ) {
+                    return false;
+                } else if visited.contains(succ) {
+                    continue;
+                }
+                stack.push((succ, false));
+            }
+        }
+    }
+    true
+}
+
 /// A (partial) exection graph.
-struct Execution<Mo> {
+struct NaiveExecution<Mo> {
     num_locations: usize,
     /// The events in the execution, in program order.
     events: Vec<Event>,
@@ -34,7 +126,7 @@ struct Execution<Mo> {
     mo: Mo,
 }
 
-impl<Mo> Execution<Mo>
+impl<Mo> NaiveExecution<Mo>
 where
     Mo: Relation,
 {
@@ -80,36 +172,36 @@ where
         self.dob.entry(e1).or_default().insert(e2);
     }
 
-    fn is_consistent(&self) -> bool {
-        self.sc_per_location() && self.external_coherence()
+    fn fr(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
+        self.inverse_rf
+            .get(&event_id)
+            .into_iter()
+            .flat_map(|&w| self.mo(w))
+    }
+    fn thread_end(&self, thread: usize) -> EventId {
+        self.thread_starts
+            .get(thread + 1)
+            .copied()
+            .unwrap_or(self.events.len() as EventId)
+    }
+}
+
+impl<Mo> Execution for NaiveExecution<Mo>
+where
+    Mo: Relation,
+{
+    fn event(&self, event_id: EventId) -> Event {
+        self.events[event_id as usize]
     }
 
-    fn sc_per_location(&self) -> bool {
-        self.acyclic(|event_id| {
-            let loc = self.events[event_id as usize].location;
-            // TODO: We could use the fact that the PO is a total order to
-            // reduce the number of edges we need to check. Problem: the last
-            // initial write has multiple direct PO successors.
-            self.po(event_id)
-                .chain(self.rf(event_id))
-                .chain(self.mo(event_id))
-                .chain(self.fr(event_id))
-                .filter(move |&e2| self.events[e2 as usize].location == loc)
-        })
+    fn num_events(&self) -> usize {
+        self.events.len()
     }
 
-    fn external_coherence(&self) -> bool {
-        self.acyclic(|event_id| {
-            let thread = self.thread_of(event_id);
-            self.dob(event_id).chain(
-                self.rf(event_id)
-                    .chain(self.mo(event_id))
-                    .chain(self.fr(event_id))
-                    // External edges go between threads, except if going from the
-                    // special initial writes thread
-                    .filter(move |&e2| thread == 0 || self.thread_of(e2) != thread),
-            )
-        })
+    fn thread_of(&self, event_id: EventId) -> usize {
+        self.thread_starts
+            .binary_search(&event_id)
+            .unwrap_or_else(|e| e - 1)
     }
 
     fn po(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
@@ -139,75 +231,34 @@ where
         self.mo.get(event_id, &self.events)
     }
 
-    fn fr(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
-        self.inverse_rf
-            .get(&event_id)
-            .into_iter()
-            .flat_map(|&w| self.mo(w))
-    }
-
-    fn thread_of(&self, event_id: EventId) -> usize {
-        self.thread_starts
-            .binary_search(&event_id)
-            .unwrap_or_else(|e| e - 1)
-    }
-
-    fn acyclic<I>(&self, successors: impl Fn(EventId) -> I) -> bool
-    where
-        I: IntoIterator<Item = EventId>,
-    {
-        let mut visited = RoaringBitmap::new();
-        let mut visiting = RoaringBitmap::new();
-        let mut stack = vec![];
-        for event_id in 0..self.events.len() as u32 {
-            if visited.contains(event_id) {
-                continue;
-            }
-
-            stack.push((event_id, false));
-            while let Some((event_id, backtracking)) = stack.pop() {
-                if backtracking {
-                    visited.insert(event_id);
-                    visiting.remove(event_id);
-                    continue;
-                }
-
-                visiting.insert(event_id);
-                stack.push((event_id, true));
-                for succ in successors(event_id) {
-                    if visiting.contains(succ) {
-                        return false;
-                    } else if visited.contains(succ) {
-                        continue;
-                    }
-                    stack.push((succ, false));
-                }
-            }
-        }
-        true
+    fn inverse_rf(&self, event_id: EventId) -> Option<EventId> {
+        self.inverse_rf.get(&event_id).copied()
     }
 }
 
-impl Execution<TotalOrderUnion> {
+impl CheckableExecution for NaiveExecution<TotalOrderUnion> {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
         // Generate all possible total orders for each location
-        // TODO: Don't generate orders going against the PO. We could also
-        // check SC per location for each total order only once, instead
+        // TODO: We could check SC per location for each total order only once, instead
         // of checking it repeatedly for each combination of total orders.
         let mut mos = vec![];
         for loc in 0..self.num_locations {
-            let writes = self
+            let mut writes = vec![vec![]; self.thread_starts.len()];
+            let mut thread = 0;
+            for w in self
                 .events
                 .iter()
                 .enumerate()
                 .filter(|(_, e)| e.location == loc && e.event_type == EventType::Write)
                 .map(|(i, _)| i as EventId)
-                .collect::<Vec<_>>();
-            let num_writes = writes.len();
-            let permutations = writes
-                .into_iter()
-                .permutations(num_writes)
-                .map(|p| TotalOrder::new(p));
+            {
+                if w >= self.thread_end(thread) {
+                    thread += 1;
+                }
+                writes[thread].push(w);
+            }
+
+            let permutations = writes.into_iter().linearizations().map(TotalOrder::new);
             mos.push(permutations);
         }
 
@@ -223,11 +274,64 @@ impl Execution<TotalOrderUnion> {
     }
 }
 
+struct SaturatingExecution {
+    exec: NaiveExecution<EventRelation>,
+    sc_order: PartialOrder,
+}
+
+impl SaturatingExecution {
+    fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
+        let exec = NaiveExecution::new(threads, num_locations, EventRelation::new());
+        let sc_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
+        Self { exec, sc_order }
+    }
+}
+
+impl Execution for SaturatingExecution {
+    fn event(&self, event_id: EventId) -> Event {
+        self.exec.event(event_id)
+    }
+
+    fn num_events(&self) -> usize {
+        self.exec.num_events()
+    }
+
+    fn thread_of(&self, event_id: EventId) -> usize {
+        self.exec.thread_of(event_id)
+    }
+
+    fn po(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        self.exec.po(event_id)
+    }
+
+    fn rf(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        self.exec.rf(event_id)
+    }
+
+    fn dob(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        self.exec.dob(event_id)
+    }
+
+    fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        self.exec.mo(event_id)
+    }
+
+    fn inverse_rf(&self, event_id: EventId) -> Option<EventId> {
+        self.exec.inverse_rf(event_id)
+    }
+}
+
+impl CheckableExecution for SaturatingExecution {
+    fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
+        loop {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn store_buffer_execution() -> Execution<TotalOrderUnion> {
+    fn store_buffer_execution() -> NaiveExecution<TotalOrderUnion> {
         let threads = vec![
             vec![
                 // e2
@@ -254,10 +358,10 @@ mod tests {
                 },
             ],
         ];
-        Execution::new(&threads, 2, TotalOrderUnion::default())
+        NaiveExecution::new(&threads, 2, TotalOrderUnion::default())
     }
 
-    fn store_buffer_sc_execution() -> Execution<TotalOrderUnion> {
+    fn store_buffer_sc_execution() -> NaiveExecution<TotalOrderUnion> {
         let mut exec = store_buffer_execution();
         // Set dob = po to get SC
         // Initial writes
@@ -276,7 +380,7 @@ mod tests {
         exec
     }
 
-    fn store_buffer_tso_execution() -> Execution<TotalOrderUnion> {
+    fn store_buffer_tso_execution() -> NaiveExecution<TotalOrderUnion> {
         let mut exec = store_buffer_execution();
         // Set dob = po \ [W]; [R] to get TSO
         // Initial writes
@@ -292,15 +396,15 @@ mod tests {
     fn test_acyclic() {
         let exec = store_buffer_execution();
         // No edges
-        assert!(exec.acyclic(|_| []));
+        assert!(acyclic(6, |_| []));
         // Self loops
-        assert!(!exec.acyclic(|e| [e]));
+        assert!(!acyclic(6, |e| [e]));
         // Simple cycle
-        assert!(!exec.acyclic(|e| [(e + 1) % exec.events.len() as EventId]));
+        assert!(!acyclic(6, |e| [(e + 1) % exec.events.len() as EventId]));
         // Simple path
-        assert!(exec.acyclic(|e| if e == 0 { vec![] } else { vec![e - 1] }));
+        assert!(acyclic(6, |e| if e == 0 { vec![] } else { vec![e - 1] }));
         // Complex DAG
-        assert!(exec.acyclic(|e| {
+        assert!(acyclic(6, |e| {
             if e == 0 {
                 vec![1, 4]
             } else if e == 1 {
@@ -316,9 +420,9 @@ mod tests {
             }
         }));
         // PO
-        assert!(exec.acyclic(|e| exec.po(e)));
+        assert!(acyclic(6, |e| exec.po(e)));
         // PO + loop back edge
-        assert!(!exec.acyclic(|e| if e == 3 {
+        assert!(!acyclic(6, |e| if e == 3 {
             vec![1, 4]
         } else {
             exec.po(e).collect()
