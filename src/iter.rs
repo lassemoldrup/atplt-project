@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 pub trait Linearizations: Iterator
 where
     Self::Item: IntoIterator,
@@ -18,7 +16,40 @@ where
     /// assert_eq!(linearizations.next(), Some(vec![3, 4, 1, 2]));
     /// assert_eq!(linearizations.next(), None);
     /// ```
-    fn linearizations(self) -> LinearizationsIter<<Self::Item as IntoIterator>::Item>;
+    fn linearizations(
+        self,
+    ) -> LinearizationsIter<<Self::Item as IntoIterator>::Item, fn(usize, usize, usize) -> usize>;
+
+    /// Returns an iterator over all linearizations of the subsequences given a
+    /// constraint function `constraint_fn` that takes the index of a
+    /// subsequence, the index of an element in that subsequence, and the
+    /// index of another subsequence, and returns an index in that other
+    /// subsequence that must come after the element in the first
+    /// subsequence.
+    ///
+    /// # Example
+    /// ```
+    /// let subsequences = vec![vec![1, 2], vec![3, 4]];
+    /// let mut linearizations = subsequences.into_iter().linearizations_with(|k1, i, k2| {
+    ///     // 1 must come before 4
+    ///     if k1 == 0 && k2 == 1 && i == 0 {
+    ///         1
+    ///     } else {
+    ///         usize::MAX
+    ///     }
+    /// });
+    /// assert_eq!(linearizations.next(), Some(vec![1, 2, 3, 4]));
+    /// assert_eq!(linearizations.next(), Some(vec![1, 3, 2, 4]));
+    /// assert_eq!(linearizations.next(), Some(vec![1, 3, 4, 2]));
+    /// assert_eq!(linearizations.next(), Some(vec![3, 1, 2, 4]));
+    /// assert_eq!(linearizations.next(), Some(vec![3, 1, 4, 2]));
+    /// assert_eq!(linearizations.next(), None);
+    fn linearizations_with<F>(
+        self,
+        constraint_fn: F,
+    ) -> LinearizationsIter<<Self::Item as IntoIterator>::Item, F>
+    where
+        F: Fn(usize, usize, usize) -> usize;
 }
 
 impl<T> Linearizations for T
@@ -26,25 +57,47 @@ where
     T: Iterator,
     T::Item: IntoIterator,
 {
-    fn linearizations(self) -> LinearizationsIter<<Self::Item as IntoIterator>::Item> {
-        let subsequences: Vec<VecDeque<_>> = self.map(|it| it.into_iter().collect()).collect();
+    fn linearizations(
+        self,
+    ) -> LinearizationsIter<<Self::Item as IntoIterator>::Item, fn(usize, usize, usize) -> usize>
+    {
+        self.linearizations_with(|_, _, _| usize::MAX)
+    }
+
+    fn linearizations_with<F>(
+        self,
+        constraint_fn: F,
+    ) -> LinearizationsIter<<Self::Item as IntoIterator>::Item, F>
+    where
+        F: Fn(usize, usize, usize) -> usize,
+    {
+        let subsequences: Vec<Vec<_>> = self.map(|it| it.into_iter().collect()).collect();
         LinearizationsIter {
             total: subsequences.iter().map(|s| s.len()).sum(),
+            next_value: vec![0; subsequences.len()],
             subsequences,
             sequence: Vec::new(),
             stack: vec![None],
+            constraint_fn,
         }
     }
 }
 
 #[derive(Clone)]
-pub struct LinearizationsIter<T> {
+pub struct LinearizationsIter<T, F> {
     total: usize,
-    subsequences: Vec<VecDeque<T>>,
+    subsequences: Vec<Vec<T>>,
+    next_value: Vec<usize>,
     sequence: Vec<T>,
     stack: Vec<Option<usize>>,
+    constraint_fn: F,
 }
-impl<T: Clone> Iterator for LinearizationsIter<T> {
+
+impl<T, F> Iterator for LinearizationsIter<T, F>
+where
+    T: Clone,
+    F: Fn(usize, usize, usize) -> usize,
+{
     type Item = Vec<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -53,25 +106,35 @@ impl<T: Clone> Iterator for LinearizationsIter<T> {
                 return Some(self.sequence.clone());
             }
 
-            let mut k = if let Some(k) = frame {
-                let x = self.sequence.pop().unwrap();
-                self.subsequences[k].push_front(x);
+            let start_k = if let Some(k) = frame {
+                self.sequence.pop();
+                self.next_value[k] -= 1;
                 k + 1
             } else {
                 0
             };
 
-            while k < self.subsequences.len() {
-                if let Some(x) = self.subsequences[k].pop_front() {
-                    self.sequence.push(x);
-                    // Backtracking
-                    self.stack.push(Some(k));
-                    // Call recursively
-                    self.stack.push(None);
-                    break;
-                } else {
-                    k += 1;
+            'subseq: for k in start_k..self.subsequences.len() {
+                let sub_idx = self.next_value[k];
+                let Some(x) = self.subsequences[k].get(sub_idx) else {
+                    continue;
+                };
+
+                // Check constraints
+                // TODO: Maybe optimize this for naive constraints
+                for k2 in 0..self.subsequences.len() {
+                    if (self.constraint_fn)(k, sub_idx, k2) < self.next_value[k2] {
+                        continue 'subseq;
+                    }
                 }
+
+                self.next_value[k] += 1;
+                self.sequence.push(x.clone());
+                // Backtracking
+                self.stack.push(Some(k));
+                // Call recursively
+                self.stack.push(None);
+                break;
             }
         }
 
@@ -132,6 +195,27 @@ mod test {
         let subsequences: Vec<Vec<usize>> = vec![];
         let mut linearizations = subsequences.into_iter().linearizations();
         assert_eq!(linearizations.next(), Some(vec![]));
+        assert_eq!(linearizations.next(), None);
+    }
+
+    #[test]
+    fn linearizations_with_test() {
+        let subsequences = vec![vec![1, 2], vec![3, 4]];
+        let mut linearizations = subsequences.into_iter().linearizations_with(|k1, i, k2| {
+            if k1 == 0 && k2 == 1 && i == 0 {
+                // 1 must come before 4
+                1
+            } else if k1 == 1 && k2 == 0 && i == 0 {
+                // 3 must come before 2
+                1
+            } else {
+                usize::MAX
+            }
+        });
+        assert_eq!(linearizations.next(), Some(vec![1, 3, 2, 4]));
+        assert_eq!(linearizations.next(), Some(vec![1, 3, 4, 2]));
+        assert_eq!(linearizations.next(), Some(vec![3, 1, 2, 4]));
+        assert_eq!(linearizations.next(), Some(vec![3, 1, 4, 2]));
         assert_eq!(linearizations.next(), None);
     }
 }

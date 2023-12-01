@@ -1,13 +1,13 @@
-use std::collections::HashMap;
 use std::iter;
 
 use itertools::Itertools;
 use roaring::RoaringBitmap;
+use rustc_hash::FxHashMap;
 
 use crate::fenwick::MinFenwickTree;
 use crate::{Event, EventId};
 
-pub type EventRelation = HashMap<EventId, RoaringBitmap>;
+pub type EventRelation = FxHashMap<EventId, RoaringBitmap>;
 
 pub trait Relation {
     fn get(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId>;
@@ -22,7 +22,7 @@ impl Relation for EventRelation {
 #[derive(Clone)]
 pub struct TotalOrder {
     order: Vec<EventId>,
-    indices: HashMap<EventId, usize>,
+    indices: FxHashMap<EventId, usize>,
 }
 
 impl TotalOrder {
@@ -127,6 +127,11 @@ impl PartialOrder {
         let e1 = self.to_thread_index(e1);
         let (i2, j2) = self.to_thread_index(e2);
         self.successor(e1, i2) <= j2
+    }
+
+    pub fn first_reachable(&self, e1: EventId, thread: usize) -> usize {
+        let e1 = self.to_thread_index(e1);
+        self.successor(e1, thread)
     }
 
     fn successor(&self, (i, j): ThreadIndex, thread: usize) -> usize {

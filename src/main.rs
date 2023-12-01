@@ -1,11 +1,10 @@
 #![feature(impl_trait_in_fn_trait_return)]
 
-use std::collections::HashMap;
-
 use iter::Linearizations;
 use itertools::Itertools;
 use relations::{EventRelation, PartialOrder, Relation, TotalOrder, TotalOrderUnion};
 use roaring::RoaringBitmap;
+use rustc_hash::FxHashMap;
 
 mod fenwick;
 mod iter;
@@ -121,7 +120,7 @@ struct NaiveExecution<Mo> {
     events: Vec<Event>,
     thread_starts: Vec<EventId>,
     rf: EventRelation,
-    inverse_rf: HashMap<EventId, EventId>,
+    inverse_rf: FxHashMap<EventId, EventId>,
     dob: EventRelation,
     mo: Mo,
 }
@@ -152,13 +151,14 @@ where
                     Some(start)
                 }),
         );
+
         Self {
             num_locations,
             events,
             thread_starts,
-            rf: EventRelation::new(),
-            inverse_rf: HashMap::new(),
-            dob: EventRelation::new(),
+            rf: EventRelation::default(),
+            inverse_rf: FxHashMap::default(),
+            dob: EventRelation::default(),
             mo,
         }
     }
@@ -172,12 +172,6 @@ where
         self.dob.entry(e1).or_default().insert(e2);
     }
 
-    fn fr(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
-        self.inverse_rf
-            .get(&event_id)
-            .into_iter()
-            .flat_map(|&w| self.mo(w))
-    }
     fn thread_end(&self, thread: usize) -> EventId {
         self.thread_starts
             .get(thread + 1)
@@ -275,15 +269,26 @@ impl CheckableExecution for NaiveExecution<TotalOrderUnion> {
 }
 
 struct SaturatingExecution {
-    exec: NaiveExecution<EventRelation>,
-    sc_order: PartialOrder,
+    exec: NaiveExecution<TotalOrderUnion>,
+    reads: Vec<Vec<EventId>>,
+    scpl_order: PartialOrder,
 }
 
 impl SaturatingExecution {
     fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
-        let exec = NaiveExecution::new(threads, num_locations, EventRelation::new());
-        let sc_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
-        Self { exec, sc_order }
+        let exec = NaiveExecution::new(threads, num_locations, TotalOrderUnion::default());
+        let scpl_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
+        let mut reads = vec![vec![]; num_locations];
+        for (event_id, event) in exec.events.iter().enumerate() {
+            if event.event_type == EventType::Read {
+                reads[event.location].push(event_id as EventId);
+            }
+        }
+        Self {
+            exec,
+            scpl_order,
+            reads,
+        }
     }
 }
 
@@ -323,7 +328,83 @@ impl Execution for SaturatingExecution {
 
 impl CheckableExecution for SaturatingExecution {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
-        loop {}
+        // Saturate first
+        let mut changed = true;
+        while changed {
+            changed = false;
+            // Find w_x [rf] r_x [SCPL] r'_x [rf^-1] w'_x
+            for loc in 0..self.reads.len() {
+                for &r_1 in &self.reads[loc] {
+                    for &r_2 in &self.reads[loc] {
+                        if r_1 == r_2 || !self.scpl_order.query(r_1, r_2) {
+                            continue;
+                        }
+                        let w_1 = self.inverse_rf(r_1).expect("r_1 should have write");
+                        let w_2 = self.inverse_rf(r_2).expect("r_2 should have write");
+                        if w_1 == w_2 || self.scpl_order.query(w_1, w_2) {
+                            continue;
+                        }
+                        if self.scpl_order.insert(w_1, w_2).is_err() {
+                            return None;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // Brute force the rest
+        let num_threads = self.exec.thread_starts.len();
+        let mut mos = vec![];
+        for loc in 0..self.exec.num_locations {
+            let mut writes = vec![vec![]; num_threads];
+            let mut thread = 0;
+            for w in self
+                .exec
+                .events
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.location == loc && e.event_type == EventType::Write)
+                .map(|(i, _)| i as EventId)
+            {
+                if w >= self.exec.thread_end(thread) {
+                    thread += 1;
+                }
+                writes[thread].push(w);
+            }
+
+            // Precompute the index of the first reachable write from each write for each
+            // thread.
+            let first_reachable: FxHashMap<(usize, usize, usize), usize> = writes
+                .iter()
+                .enumerate()
+                .map(|(i, list)| list.iter().enumerate().map(move |(j, &w)| (i, j, w)))
+                .flatten()
+                .cartesian_product(0..num_threads)
+                .map(|((i, j, w), th)| {
+                    let first_event = self.exec.thread_starts[th]
+                        + self.scpl_order.first_reachable(w, th) as EventId;
+                    let first_write = writes[th].binary_search(&first_event).unwrap_or_else(|e| e);
+                    ((i, j, th), first_write)
+                })
+                .collect();
+
+            let permutations = writes
+                .into_iter()
+                .linearizations_with(move |i, j, th| first_reachable[&(i, j, th)])
+                .map(TotalOrder::new);
+            mos.push(permutations);
+        }
+
+        // Try all possible combinations of total orders
+        for mo in mos.into_iter().multi_cartesian_product() {
+            self.exec.mo = TotalOrderUnion { orders: mo };
+            if self.is_consistent() {
+                return Some(self.exec.mo.clone());
+            }
+        }
+
+        None
     }
 }
 

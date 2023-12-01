@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 roaring = "0.10"
 itertools = "0.12"
+rustc-hash = "1.1"
