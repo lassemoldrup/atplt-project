@@ -10,11 +10,11 @@ use crate::{Event, EventId};
 pub type EventRelation = FxHashMap<EventId, RoaringBitmap>;
 
 pub trait Relation {
-    fn get(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId>;
+    fn successors(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId>;
 }
 
 impl Relation for EventRelation {
-    fn get(&self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
+    fn successors(&self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
         self.get(&event_id).into_iter().flatten()
     }
 }
@@ -37,7 +37,7 @@ impl TotalOrder {
 }
 
 impl Relation for TotalOrder {
-    fn get<'a>(&'a self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
+    fn successors<'a>(&'a self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
         self.indices
             .get(&event_id)
             .map(|&i| &self.order[i + 1..])
@@ -53,9 +53,13 @@ pub struct TotalOrderUnion {
 }
 
 impl Relation for TotalOrderUnion {
-    fn get<'a>(&'a self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId> {
+    fn successors<'a>(
+        &'a self,
+        event_id: EventId,
+        events: &[Event],
+    ) -> impl Iterator<Item = EventId> {
         let loc = events[event_id as usize].location;
-        self.orders[loc].get(event_id, events)
+        self.orders[loc].successors(event_id, events)
     }
 }
 
@@ -164,7 +168,7 @@ impl PartialOrder {
 }
 
 impl Relation for PartialOrder {
-    fn get(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId> {
+    fn successors(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId> {
         let (i1, j1) = self.to_thread_index(event_id);
         let last_thread_end = events.len() as EventId;
         (0..self.edges.len())
@@ -283,8 +287,8 @@ mod test {
             event_type: EventType::Read,
         }; 9];
 
-        itertools::assert_equal(partial_order.get(0, &events), 1..9);
-        itertools::assert_equal(partial_order.get(1, &events), vec![2, 4, 5, 6, 7, 8]);
-        itertools::assert_equal(partial_order.get(6, &events), vec![4, 5, 7, 8]);
+        itertools::assert_equal(partial_order.successors(0, &events), 1..9);
+        itertools::assert_equal(partial_order.successors(1, &events), vec![2, 4, 5, 6, 7, 8]);
+        itertools::assert_equal(partial_order.successors(6, &events), vec![4, 5, 7, 8]);
     }
 }

@@ -2,7 +2,7 @@ use crate::iter::Linearizations;
 use crate::relations::{EventRelation, PartialOrder, Relation, TotalOrder, TotalOrderUnion};
 use itertools::Itertools;
 use roaring::RoaringBitmap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub type Location = usize;
 pub type EventId = u32;
@@ -48,23 +48,25 @@ pub trait Execution {
     }
 
     fn external_coherence(&self) -> bool {
-        acyclic(self.num_events(), |e1| {
-            let thread = self.thread_of(e1);
-            self.dob(e1).chain(
-                self.rf(e1)
-                    .chain(self.mo(e1))
-                    .chain(self.fr(e1))
-                    // External edges go between threads, except if going from the
-                    // special initial writes thread
-                    .filter(move |&e2| thread == 0 || self.thread_of(e2) != thread),
-            )
-        })
+        acyclic(self.num_events(), |e| self.ec(e))
     }
 
     fn fr(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
         self.inverse_rf(event_id)
             .into_iter()
             .flat_map(|w| self.mo(w))
+    }
+
+    fn ec(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
+        let thread = self.thread_of(event_id);
+        self.dob(event_id).chain(
+            self.rf(event_id)
+                .chain(self.mo(event_id))
+                .chain(self.fr(event_id))
+                // External edges go between threads, except if going from the
+                // special initial writes thread
+                .filter(move |&e2| thread == 0 || self.thread_of(e2) != thread),
+        )
     }
 }
 
@@ -210,7 +212,7 @@ impl Execution for NaiveExecution {
     }
 
     fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
-        self.mo.get(event_id, &self.events)
+        self.mo.successors(event_id, &self.events)
     }
 
     fn inverse_rf(&self, event_id: EventId) -> Option<EventId> {
@@ -259,22 +261,43 @@ impl CheckableExecution for NaiveExecution {
 struct SaturatingExecution {
     exec: NaiveExecution,
     reads: Vec<Vec<EventId>>,
+    writes: Vec<Vec<EventId>>,
+    mo: EventRelation,
     scpl_order: PartialOrder,
+}
+
+impl SaturatingExecution {
+    fn reachable_ec(&self, from: EventId, to: EventId) -> bool {
+        let mut seen = FxHashSet::default();
+        let mut stack = vec![from];
+        while let Some(e1) = stack.pop() {
+            if e1 == to {
+                return true;
+            }
+            seen.insert(e1);
+            stack.extend(self.ec(e1).filter(|e2| !seen.contains(e2)));
+        }
+        false
+    }
 }
 
 impl From<NaiveExecution> for SaturatingExecution {
     fn from(exec: NaiveExecution) -> Self {
         let scpl_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
         let mut reads = vec![vec![]; exec.num_locations];
+        let mut writes = vec![vec![]; exec.num_locations];
         for (event_id, event) in exec.events.iter().enumerate() {
-            if event.event_type == EventType::Read {
-                reads[event.location].push(event_id as EventId);
+            match event.event_type {
+                EventType::Read => reads[event.location].push(event_id as EventId),
+                EventType::Write => writes[event.location].push(event_id as EventId),
             }
         }
         Self {
             exec,
-            scpl_order,
             reads,
+            writes,
+            mo: EventRelation::default(),
+            scpl_order,
         }
     }
 }
@@ -305,11 +328,15 @@ impl Execution for SaturatingExecution {
     }
 
     fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
-        self.exec.mo(event_id)
+        self.mo.successors(event_id, &self.exec.events)
     }
 
     fn inverse_rf(&self, event_id: EventId) -> Option<EventId> {
         self.exec.inverse_rf(event_id)
+    }
+
+    fn is_consistent(&self) -> bool {
+        self.exec.is_consistent()
     }
 }
 
@@ -319,9 +346,10 @@ impl CheckableExecution for SaturatingExecution {
         let mut changed = true;
         while changed {
             changed = false;
-            // Find w_x [rf] r_x [SCPL] r'_x [rf^-1] w'_x
+
             for loc in 0..self.reads.len() {
                 for &r_1 in &self.reads[loc] {
+                    // Find w_x [rf] r_x [SCPL] r'_x [rf^-1] w'_x
                     for &r_2 in &self.reads[loc] {
                         if r_1 == r_2 || !self.scpl_order.query(r_1, r_2) {
                             continue;
@@ -334,6 +362,40 @@ impl CheckableExecution for SaturatingExecution {
                         if self.scpl_order.insert(w_1, w_2).is_err() {
                             return None;
                         }
+                        self.mo.entry(w_1).or_default().insert(w_2);
+                        changed = true;
+                    }
+
+                    // Find w_x [rf] r_x [SCPL^-1] w'_x
+                    for &w_2 in &self.writes[loc] {
+                        if !self.scpl_order.query(w_2, r_1) {
+                            continue;
+                        }
+                        let w_1 = self.inverse_rf(r_1).expect("r_1 should have write");
+                        if w_1 == w_2 || self.scpl_order.query(w_1, w_2) {
+                            continue;
+                        }
+                        if self.scpl_order.insert(w_1, w_2).is_err() {
+                            return None;
+                        }
+                        self.mo.entry(w_1).or_default().insert(w_2);
+                        changed = true;
+                    }
+                }
+
+                // Find w_x [ECe] w'_x
+                for &w_1 in &self.writes[loc] {
+                    for &w_2 in &self.writes[loc] {
+                        if self.thread_of(w_1) == self.thread_of(w_2)
+                            || self.scpl_order.query(w_1, w_2)
+                            || !self.reachable_ec(w_1, w_2)
+                        {
+                            continue;
+                        }
+                        if self.scpl_order.insert(w_1, w_2).is_err() {
+                            return None;
+                        }
+                        self.mo.entry(w_1).or_default().insert(w_2);
                         changed = true;
                     }
                 }
