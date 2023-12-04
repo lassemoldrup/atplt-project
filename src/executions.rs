@@ -1,5 +1,9 @@
+use std::fmt::{self, Debug, Display};
+
 use crate::iter::Linearizations;
-use crate::relations::{EventRelation, PartialOrder, Relation, TotalOrder, TotalOrderUnion};
+use crate::relations::{
+    EventRelation, PartialOrder, Relation, ThreadIndex, TotalOrder, TotalOrderUnion,
+};
 use itertools::Itertools;
 use roaring::RoaringBitmap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -13,9 +17,23 @@ pub struct Event {
     pub event_type: EventType,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+impl Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {}", self.event_type, self.location)
+    }
+}
+
+impl Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        <Self as Display>::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display)]
 pub enum EventType {
+    #[strum(serialize = "R")]
     Read,
+    #[strum(serialize = "W")]
     Write,
 }
 
@@ -110,7 +128,7 @@ where
 }
 
 /// A (partial) exection graph.
-struct NaiveExecution {
+pub struct NaiveExecution {
     num_locations: usize,
     /// The events in the execution, in program order.
     events: Vec<Event>,
@@ -122,7 +140,7 @@ struct NaiveExecution {
 }
 
 impl NaiveExecution {
-    fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
+    pub fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
         // Initial writes
         let mut events: Vec<_> = (0..num_locations)
             .map(|loc| Event {
@@ -156,13 +174,17 @@ impl NaiveExecution {
         }
     }
 
-    fn add_rf(&mut self, w: EventId, r: EventId) {
+    pub fn add_rf(&mut self, w: EventId, r: EventId) {
         self.rf.entry(w).or_default().insert(r);
         self.inverse_rf.insert(r, w);
     }
 
-    fn add_dob(&mut self, e1: EventId, e2: EventId) {
+    pub fn add_dob(&mut self, e1: EventId, e2: EventId) {
         self.dob.entry(e1).or_default().insert(e2);
+    }
+
+    pub fn to_event_id(&self, (thread, idx): ThreadIndex) -> EventId {
+        self.thread_starts[thread] + idx as EventId
     }
 
     fn thread_end(&self, thread: usize) -> EventId {
@@ -170,6 +192,33 @@ impl NaiveExecution {
             .get(thread + 1)
             .copied()
             .unwrap_or(self.events.len() as EventId)
+    }
+
+    pub fn with_sc(mut self) -> Self {
+        for event in 0..self.num_events() as EventId {
+            for succ in self.po(event).collect_vec() {
+                self.add_dob(event, succ);
+            }
+        }
+        self
+    }
+
+    pub fn with_tso(mut self) -> Self {
+        for event in 0..self.num_events() as EventId {
+            for succ in self.po(event).collect_vec() {
+                if self.event(event).event_type == EventType::Write
+                    && self.event(succ).event_type == EventType::Read
+                {
+                    continue;
+                }
+                self.add_dob(event, succ);
+            }
+        }
+        self
+    }
+
+    pub fn with_relaxed(self) -> Self {
+        self
     }
 }
 
@@ -203,15 +252,15 @@ impl Execution for NaiveExecution {
         event_id + 1..next_thread_start
     }
 
-    fn rf(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
+    fn rf(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
         self.rf.get(&event_id).into_iter().flatten()
     }
 
-    fn dob(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
+    fn dob(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
         self.dob.get(&event_id).into_iter().flatten()
     }
 
-    fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId> + '_ {
+    fn mo(&self, event_id: EventId) -> impl Iterator<Item = EventId> {
         self.mo.successors(event_id, &self.events)
     }
 
@@ -258,7 +307,7 @@ impl CheckableExecution for NaiveExecution {
     }
 }
 
-struct SaturatingExecution {
+pub struct SaturatingExecution {
     exec: NaiveExecution,
     reads: Vec<Vec<EventId>>,
     writes: Vec<Vec<EventId>>,
@@ -519,35 +568,6 @@ mod tests {
             ],
         ];
         NaiveExecution::new(&threads, 2)
-    }
-
-    impl NaiveExecution {
-        fn with_sc(mut self) -> Self {
-            for event in 0..self.num_events() as EventId {
-                for succ in self.po(event).collect_vec() {
-                    self.add_dob(event, succ);
-                }
-            }
-            self
-        }
-
-        fn with_tso(mut self) -> Self {
-            for event in 0..self.num_events() as EventId {
-                for succ in self.po(event).collect_vec() {
-                    if self.event(event).event_type == EventType::Write
-                        && self.event(succ).event_type == EventType::Read
-                    {
-                        continue;
-                    }
-                    self.add_dob(event, succ);
-                }
-            }
-            self
-        }
-
-        fn with_relaxed(self) -> Self {
-            self
-        }
     }
 
     #[test]

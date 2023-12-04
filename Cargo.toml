@@ -9,3 +9,7 @@ edition = "2021"
 roaring = "0.10"
 itertools = "0.12"
 rustc-hash = "1.1"
+clap = { version = "4.4", features = ["derive"] }
+graphviz-rust = "0.6.6"
+anyhow = "1.0"
+strum = { version = "0.25", features = ["derive"] }

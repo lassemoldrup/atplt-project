@@ -63,7 +63,7 @@ impl Relation for TotalOrderUnion {
     }
 }
 
-type ThreadIndex = (usize, usize);
+pub type ThreadIndex = (usize, usize);
 
 /// A data structure for storing partial orders over events. Parital orders
 /// are always refinements of the program order. Supports `O(log n)` edge
