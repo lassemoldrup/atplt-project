@@ -19,7 +19,7 @@ impl Relation for EventRelation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TotalOrder {
     order: Vec<EventId>,
     indices: FxHashMap<EventId, usize>,
@@ -47,7 +47,7 @@ impl Relation for TotalOrder {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct TotalOrderUnion {
     pub orders: Vec<TotalOrder>,
 }
