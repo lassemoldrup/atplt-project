@@ -118,6 +118,7 @@ fn main() -> anyhow::Result<()> {
     for (from, to) in rf_edges {
         exec.add_rf(exec.to_event_id(from), exec.to_event_id(to));
     }
+    exec.close_rf();
 
     match app.mode {
         Mode::Sc => exec = exec.with_sc(),

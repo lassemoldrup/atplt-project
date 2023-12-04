@@ -1,0 +1,11 @@
+digraph g {
+    n0_0 [type = W;loc = 0;th = 0;idx = 0;label = "W x 1";pos = "0,0!";shape = plain;];
+    n0_1 [type = W;loc = 1;th = 0;idx = 1;label = "W y 1";pos = "0,-1!";shape = plain;];
+    n1_0 [type = R;loc = 1;th = 1;idx = 0;label = "R y 0";pos = "1,0!";shape = plain;];
+    n1_1 [type = R;loc = 0;th = 1;idx = 1;label = "R x 0";pos = "1,-1!";shape = plain;];
+    
+    n0_0 -> n0_1 [label = "po";];
+    n1_0 -> n1_1 [label = "po";];
+    n0_1 -> n1_0 [from_th = 0; to_th = 1; from_idx = 0; to_idx = 1; constraint = false; label = "rf"; fontcolor = blue; color = blue;];
+    n0_0 -> n1_1 [from_th = 0; to_th = 1; from_idx = 1; to_idx = 0; constraint = false; label = "rf"; fontcolor = blue; color = blue;];
+}

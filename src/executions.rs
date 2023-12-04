@@ -187,6 +187,19 @@ impl NaiveExecution {
         self.thread_starts[thread] + idx as EventId
     }
 
+    pub fn close_rf(&mut self) {
+        for event in 0..self.num_events() as EventId {
+            if self.event(event).event_type != EventType::Read {
+                continue;
+            }
+            let initial_write = self.thread_of(event) as EventId;
+            self.inverse_rf.entry(event).or_insert_with(|| {
+                self.rf.entry(initial_write).or_default().insert(event);
+                initial_write
+            });
+        }
+    }
+
     fn thread_end(&self, thread: usize) -> EventId {
         self.thread_starts
             .get(thread + 1)
