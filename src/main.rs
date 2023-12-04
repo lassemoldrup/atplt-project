@@ -114,7 +114,7 @@ where
 }
 
 /// A (partial) exection graph.
-struct NaiveExecution<Mo> {
+struct NaiveExecution {
     num_locations: usize,
     /// The events in the execution, in program order.
     events: Vec<Event>,
@@ -122,14 +122,11 @@ struct NaiveExecution<Mo> {
     rf: EventRelation,
     inverse_rf: FxHashMap<EventId, EventId>,
     dob: EventRelation,
-    mo: Mo,
+    mo: TotalOrderUnion,
 }
 
-impl<Mo> NaiveExecution<Mo>
-where
-    Mo: Relation,
-{
-    fn new(threads: &[Vec<Event>], num_locations: usize, mo: Mo) -> Self {
+impl NaiveExecution {
+    fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
         // Initial writes
         let mut events: Vec<_> = (0..num_locations)
             .map(|loc| Event {
@@ -159,7 +156,7 @@ where
             rf: EventRelation::default(),
             inverse_rf: FxHashMap::default(),
             dob: EventRelation::default(),
-            mo,
+            mo: TotalOrderUnion::default(),
         }
     }
 
@@ -180,10 +177,7 @@ where
     }
 }
 
-impl<Mo> Execution for NaiveExecution<Mo>
-where
-    Mo: Relation,
-{
+impl Execution for NaiveExecution {
     fn event(&self, event_id: EventId) -> Event {
         self.events[event_id as usize]
     }
@@ -230,7 +224,7 @@ where
     }
 }
 
-impl CheckableExecution for NaiveExecution<TotalOrderUnion> {
+impl CheckableExecution for NaiveExecution {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
         // Generate all possible total orders for each location
         // TODO: We could check SC per location for each total order only once, instead
@@ -269,16 +263,15 @@ impl CheckableExecution for NaiveExecution<TotalOrderUnion> {
 }
 
 struct SaturatingExecution {
-    exec: NaiveExecution<TotalOrderUnion>,
+    exec: NaiveExecution,
     reads: Vec<Vec<EventId>>,
     scpl_order: PartialOrder,
 }
 
-impl SaturatingExecution {
-    fn new(threads: &[Vec<Event>], num_locations: usize) -> Self {
-        let exec = NaiveExecution::new(threads, num_locations, TotalOrderUnion::default());
+impl From<NaiveExecution> for SaturatingExecution {
+    fn from(exec: NaiveExecution) -> Self {
         let scpl_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
-        let mut reads = vec![vec![]; num_locations];
+        let mut reads = vec![vec![]; exec.num_locations];
         for (event_id, event) in exec.events.iter().enumerate() {
             if event.event_type == EventType::Read {
                 reads[event.location].push(event_id as EventId);
@@ -383,7 +376,7 @@ impl CheckableExecution for SaturatingExecution {
                 .cartesian_product(0..num_threads)
                 .map(|((i, j, w), th)| {
                     let first_event = self.exec.thread_starts[th]
-                        + self.scpl_order.first_reachable(w, th) as EventId;
+                        .saturating_add(self.scpl_order.first_reachable(w, th) as EventId);
                     let first_write = writes[th].binary_search(&first_event).unwrap_or_else(|e| e);
                     ((i, j, th), first_write)
                 })
@@ -412,7 +405,7 @@ impl CheckableExecution for SaturatingExecution {
 mod tests {
     use super::*;
 
-    fn store_buffer_execution() -> NaiveExecution<TotalOrderUnion> {
+    fn store_buffer_execution() -> NaiveExecution {
         let threads = vec![
             vec![
                 // e2
@@ -439,10 +432,10 @@ mod tests {
                 },
             ],
         ];
-        NaiveExecution::new(&threads, 2, TotalOrderUnion::default())
+        NaiveExecution::new(&threads, 2)
     }
 
-    fn store_buffer_sc_execution() -> NaiveExecution<TotalOrderUnion> {
+    fn store_buffer_sc_execution() -> NaiveExecution {
         let mut exec = store_buffer_execution();
         // Set dob = po to get SC
         // Initial writes
@@ -461,7 +454,7 @@ mod tests {
         exec
     }
 
-    fn store_buffer_tso_execution() -> NaiveExecution<TotalOrderUnion> {
+    fn store_buffer_tso_execution() -> NaiveExecution {
         let mut exec = store_buffer_execution();
         // Set dob = po \ [W]; [R] to get TSO
         // Initial writes
@@ -530,6 +523,9 @@ mod tests {
         exec.add_rf(4, 3);
 
         assert!(exec.is_totally_consistent().is_some());
+        assert!(SaturatingExecution::from(exec)
+            .is_totally_consistent()
+            .is_some());
     }
 
     #[test]
@@ -539,6 +535,9 @@ mod tests {
         exec.add_rf(1, 3);
 
         assert!(exec.is_totally_consistent().is_none());
+        assert!(SaturatingExecution::from(exec)
+            .is_totally_consistent()
+            .is_none());
     }
 
     #[test]
@@ -547,7 +546,10 @@ mod tests {
         exec.add_rf(0, 5);
         exec.add_rf(1, 3);
 
-        assert!(exec.is_totally_consistent().is_some())
+        assert!(exec.is_totally_consistent().is_some());
+        assert!(SaturatingExecution::from(exec)
+            .is_totally_consistent()
+            .is_some());
     }
 }
 
