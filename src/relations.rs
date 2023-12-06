@@ -1,6 +1,5 @@
 use std::iter;
 
-use itertools::Itertools;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 
@@ -118,42 +117,47 @@ impl Relation for TotalOrderUnion {
 
 pub type ThreadIndex = (usize, usize);
 
-/// A data structure for storing partial orders over events. Parital orders
-/// are always refinements of the program order. Supports `O(log n)` edge
-/// insertion and `O(log n)` reachability queries.
+/// A data structure for storing partial orders over events. Supports `O(log n)`
+/// edge insertion and `O(log n)` reachability queries.
+#[derive(Debug)]
 pub struct PartialOrder {
     /// `edges[i][j]` holds all edges from thread `i` to thread `j`.
     edges: Vec<Vec<MinFenwickTree<usize>>>,
-    thread_starts: Vec<EventId>,
+    /// A subset of the program order for each thread.
+    threads: Vec<Vec<EventId>>,
+    thread_indices: FxHashMap<EventId, ThreadIndex>,
 }
 
 impl PartialOrder {
-    pub fn new(thread_starts: Vec<EventId>, num_events: usize) -> Self {
-        let num_threads = thread_starts.len();
-        let thread_lengths = thread_starts
-            .iter()
-            .zip(thread_starts.iter().skip(1).chain(&[num_events as EventId]))
-            .map(|(&start, &end)| end as usize - start as usize)
-            .collect_vec();
+    pub fn new(threads: Vec<Vec<EventId>>) -> Self {
+        let num_threads = threads.len();
         let mut edges = vec![vec![]; num_threads];
-        for (i1, &len) in thread_lengths.iter().enumerate() {
+        let mut thread_indices = FxHashMap::default();
+        for (i1, thread) in threads.iter().enumerate() {
             for i2 in 0..num_threads {
                 if i1 == i2 {
                     // Edges to the same thread point to the next event, or usize::MAX for
                     // the last event. This makes sure that events can reach other events
                     // in the same thread.
                     edges[i1].push(MinFenwickTree::build(
-                        (1..len).chain(iter::once(usize::MAX)),
+                        (1..thread.len()).chain(iter::once(usize::MAX)),
                     ));
                 } else {
-                    edges[i1].push(MinFenwickTree::build(iter::repeat(usize::MAX).take(len)));
+                    edges[i1].push(MinFenwickTree::build(
+                        iter::repeat(usize::MAX).take(thread.len()),
+                    ));
                 }
+            }
+
+            for (j1, &e) in thread.iter().enumerate() {
+                thread_indices.insert(e, (i1, j1));
             }
         }
 
         Self {
             edges,
-            thread_starts,
+            threads,
+            thread_indices,
         }
     }
 
@@ -186,9 +190,11 @@ impl PartialOrder {
         self.successor(e1, i2) <= j2
     }
 
-    pub fn first_reachable(&self, e1: EventId, thread: usize) -> usize {
+    pub fn first_reachable(&self, e1: EventId, thread: usize) -> Option<EventId> {
         let e1 = self.to_thread_index(e1);
-        self.successor(e1, thread)
+        self.threads[thread]
+            .get(self.successor(e1, thread))
+            .copied()
     }
 
     fn successor(&self, (i, j): ThreadIndex, thread: usize) -> usize {
@@ -209,33 +215,21 @@ impl PartialOrder {
     }
 
     fn to_thread_index(&self, event_id: EventId) -> (usize, usize) {
-        let thread = self
-            .thread_starts
-            .binary_search(&event_id)
-            .unwrap_or_else(|i| i - 1);
-        (
-            thread,
-            event_id as usize - self.thread_starts[thread] as usize,
-        )
+        self.thread_indices[&event_id]
     }
 }
 
 impl Relation for PartialOrder {
-    fn successors(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId> {
+    fn successors(&self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
         let (i1, j1) = self.to_thread_index(event_id);
-        let last_thread_end = events.len() as EventId;
-        (0..self.edges.len())
+        (0..self.threads.len())
             .map(move |i2| {
-                let j2 = self.edges[i1][i2].query(j1);
-                let start = self.thread_starts[i2] + j2 as EventId;
-                let end = self
-                    .thread_starts
-                    .get(i2 + 1)
-                    .copied()
-                    .unwrap_or(last_thread_end);
-                start..end
+                let thread_events = &self.threads[i2];
+                let j2 = self.edges[i1][i2].query(j1).min(thread_events.len());
+                &thread_events[j2..]
             })
             .flatten()
+            .copied()
     }
 }
 
@@ -251,7 +245,7 @@ mod test {
     #[test]
     fn partial_order_two_thread_test() {
         // Two thread with indices 0, 1, 2, || 3, 4, 5
-        let mut partial_order = PartialOrder::new(vec![0, 3], 6);
+        let mut partial_order = PartialOrder::new(vec![vec![0, 1, 2], vec![3, 4, 5]]);
         assert!(partial_order.query(0, 2));
         assert!(!partial_order.query(0, 3));
 
@@ -287,7 +281,8 @@ mod test {
     #[test]
     fn partial_order_three_thread_test() {
         // Three thread with indices 0, 1, 2, || 3, 4, 5, || 6, 7, 8
-        let mut partial_order = PartialOrder::new(vec![0, 3, 6], 9);
+        let mut partial_order =
+            PartialOrder::new(vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8]]);
         assert!(partial_order.query(0, 2));
         assert!(!partial_order.query(0, 6));
 
@@ -323,7 +318,8 @@ mod test {
     #[test]
     fn partial_order_iter_test() {
         // Three thread with indices 0, 1, 2, || 3, 4, 5, || 6, 7, 8
-        let mut partial_order = PartialOrder::new(vec![0, 3, 6], 9);
+        let mut partial_order =
+            PartialOrder::new(vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8]]);
 
         // 0----->3 ||  6
         //    ||--------^

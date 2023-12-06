@@ -17,8 +17,13 @@ mod relations;
 #[derive(Parser)]
 struct App {
     graph: PathBuf,
+    /// The consistency model to use. Possible values are `sc`, `tso`, `rlx`,
+    /// and `custom`.
     #[clap(short, long, default_value = "sc")]
     mode: Mode,
+    /// Whether to skip the naive consistency check.
+    #[clap(short, long, default_value = "false")]
+    no_naive: bool,
 }
 
 #[derive(ValueEnum, Clone)]
@@ -127,24 +132,33 @@ fn main() -> anyhow::Result<()> {
         Mode::Custom => todo!(),
     }
 
-    println!("Running naive consistency check...");
-    let start = Instant::now();
-    let is_consistent = exec.is_totally_consistent();
-    let elapsed = start.elapsed();
-    println!("Naive consistency check took {} ms", elapsed.as_millis());
-    println!("Naive consistency check result: {is_consistent:?}\n");
+    let mut linearization_checked = 0;
+    if app.no_naive {
+        println!("Skipping naive consistency check");
+    } else {
+        println!("Running naive consistency check...");
+        let start = Instant::now();
+        let is_consistent = exec.is_totally_consistent();
+        let elapsed = start.elapsed();
+        linearization_checked = exec.linearizations_checked();
+        println!("Naive consistency check took {} ms", elapsed.as_millis());
+        println!("Naive consistency check result: {is_consistent:?}");
+        println!("Checked {linearization_checked} linearization(s)\n");
+    }
 
     println!("Running consistency check with saturation...");
     let start = Instant::now();
     let mut exec = SaturatingExecution::from(exec);
     let is_consistent = exec.is_totally_consistent();
     let elapsed = start.elapsed();
+    linearization_checked = exec.linearizations_checked() - linearization_checked;
     println!(
         "Consistency check with saturation took {} ms",
         elapsed.as_millis()
     );
     println!("Consistency check with saturation result: {is_consistent:?}");
-    println!("Inserted {} edge(s) with saturation", exec.edges_inserted);
+    println!("Checked {linearization_checked} linearization(s)");
+    println!("Inserted {} edge(s) with saturation", exec.edges_inserted());
 
     Ok(())
 }

@@ -111,6 +111,7 @@ pub trait Execution {
 
 pub trait CheckableExecution: Execution {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion>;
+    fn linearizations_checked(&self) -> usize;
 }
 
 fn acyclic<I>(num_events: usize, successors: impl Fn(EventId) -> I) -> bool
@@ -159,6 +160,7 @@ pub struct NaiveExecution {
     inverse_rf: FxHashMap<EventId, EventId>,
     dob: EventRelation,
     mo: TotalOrderUnion,
+    linearizations_checked: usize,
 }
 
 impl NaiveExecution {
@@ -203,6 +205,7 @@ impl NaiveExecution {
             inverse_rf: FxHashMap::default(),
             dob: EventRelation::default(),
             mo: TotalOrderUnion::default(),
+            linearizations_checked: 0,
         }
     }
 
@@ -220,13 +223,14 @@ impl NaiveExecution {
     }
 
     pub fn close_rf(&mut self) {
-        for event in 0..self.num_events() as EventId {
-            if self.event(event).event_type != EventType::Read {
+        for event_id in 0..self.num_events() as EventId {
+            let event = self.event(event_id);
+            if event.event_type != EventType::Read {
                 continue;
             }
-            let initial_write = self.thread_of(event) as EventId;
-            self.inverse_rf.entry(event).or_insert_with(|| {
-                self.rf.entry(initial_write).or_default().insert(event);
+            let initial_write = event.location as EventId;
+            self.inverse_rf.entry(event_id).or_insert_with(|| {
+                self.rf.entry(initial_write).or_default().insert(event_id);
                 initial_write
             });
         }
@@ -340,6 +344,7 @@ impl CheckableExecution for NaiveExecution {
 
         // Try all possible combinations of total orders
         for mo in mos.into_iter().multi_cartesian_product() {
+            self.linearizations_checked += 1;
             self.mo = TotalOrderUnion { orders: mo };
             if self.is_consistent() {
                 return Some(self.mo.clone());
@@ -348,6 +353,10 @@ impl CheckableExecution for NaiveExecution {
 
         None
     }
+
+    fn linearizations_checked(&self) -> usize {
+        self.linearizations_checked
+    }
 }
 
 pub struct SaturatingExecution {
@@ -355,51 +364,30 @@ pub struct SaturatingExecution {
     reads_per_location: Vec<Vec<EventId>>,
     writes_per_location: Vec<Vec<EventId>>,
     writes_per_thread_per_location: Vec<Vec<Vec<EventId>>>,
-    scpl_order: PartialOrder,
-    pub edges_inserted: usize,
+    scpl: Scpl,
 }
 
 impl SaturatingExecution {
     fn reachable_ec(&self, from: EventId) -> impl Iterator<Item = EventId> + '_ {
         (|e| self.ec(e)).transitive(from, &self.exec.events)
     }
-}
 
-fn insert_scpl(
-    exec: &NaiveExecution,
-    scpl_order: &mut PartialOrder,
-    counter: &mut usize,
-    w_1: EventId,
-    w_2: EventId,
-) -> Result<bool, PartialOrderCycleError> {
-    if scpl_order.query(w_1, w_2) {
-        return Ok(false);
+    pub fn edges_inserted(&self) -> usize {
+        self.scpl.inserted
     }
-    scpl_order.insert(w_1, w_2)?;
-    *counter += 1;
-
-    // Insert new fr edges
-    for r_1 in exec.rf(w_1) {
-        if scpl_order.query(r_1, w_2) {
-            continue;
-        }
-
-        scpl_order.insert(r_1, w_2)?;
-        *counter += 1;
-    }
-
-    Ok(true)
 }
 
 impl From<NaiveExecution> for SaturatingExecution {
     fn from(exec: NaiveExecution) -> Self {
-        let scpl_order = PartialOrder::new(exec.thread_starts.clone(), exec.num_events());
         let mut reads_per_location = vec![vec![]; exec.num_locations];
         let mut writes_per_location = vec![vec![]; exec.num_locations];
         let mut writes_per_thread_per_location =
             vec![vec![vec![]; exec.thread_starts.len()]; exec.num_locations];
+        let mut events_per_thread_per_location =
+            vec![vec![vec![]; exec.thread_starts.len()]; exec.num_locations];
         for (event_id, event) in exec.events.iter().enumerate() {
             let event_id = event_id as EventId;
+            events_per_thread_per_location[event.location][exec.thread_of(event_id)].push(event_id);
             match event.event_type {
                 EventType::Read => reads_per_location[event.location].push(event_id),
                 EventType::Write => {
@@ -409,13 +397,14 @@ impl From<NaiveExecution> for SaturatingExecution {
                 }
             }
         }
+        let scpl = Scpl::new(events_per_thread_per_location);
+
         Self {
             exec,
             reads_per_location,
             writes_per_location,
             writes_per_thread_per_location,
-            scpl_order,
-            edges_inserted: 0,
+            scpl,
         }
     }
 }
@@ -454,7 +443,10 @@ impl Execution for SaturatingExecution {
                     .iter()
                     .enumerate()
                     .flat_map(move |(th, writes)| {
-                        let first_event = self.scpl_order.first_reachable(event_id, th) as EventId;
+                        let first_event = self
+                            .scpl
+                            .first_reachable(loc, event_id, th)
+                            .unwrap_or(EventId::MAX);
                         let first_write = writes.binary_search(&first_event).unwrap_or_else(|w| w);
                         writes[first_write..].iter().copied()
                     })
@@ -475,7 +467,10 @@ impl Execution for SaturatingExecution {
                     .enumerate()
                     .filter(move |(th, _)| *th != thread)
                     .flat_map(move |(th, writes)| {
-                        let first_event = self.scpl_order.first_reachable(event_id, th) as EventId;
+                        let first_event = self
+                            .scpl
+                            .first_reachable(loc, event_id, th)
+                            .unwrap_or(EventId::MAX);
                         let first_write = writes.binary_search(&first_event).unwrap_or_else(|w| w);
                         writes[first_write..].iter().copied()
                     })
@@ -488,64 +483,34 @@ impl Execution for SaturatingExecution {
     fn inverse_rf(&self, event_id: EventId) -> Option<EventId> {
         self.exec.inverse_rf(event_id)
     }
-
-    fn is_consistent(&self) -> bool {
-        self.exec.is_consistent()
-    }
 }
 
 impl CheckableExecution for SaturatingExecution {
     fn is_totally_consistent(&mut self) -> Option<TotalOrderUnion> {
-        let mut changed = true;
-
-        // Insert all fr edges
-        while changed {
-            changed = false;
-
-            for loc in 0..self.exec.num_locations {
-                for &w_1 in &self.writes_per_location[loc] {
-                    for &w_2 in &self.writes_per_location[loc] {
-                        if w_1 == w_2 || !self.scpl_order.query(w_1, w_2) {
-                            continue;
-                        }
-                        for r_1 in self.exec.rf(w_1) {
-                            changed |= insert_scpl(
-                                &self.exec,
-                                &mut self.scpl_order,
-                                &mut self.edges_inserted,
-                                r_1,
-                                w_2,
-                            )
-                            .ok()?;
-                        }
-                    }
-                }
-            }
+        for (loc, r) in self
+            .reads_per_location
+            .iter()
+            .enumerate()
+            .flat_map(|(l, rs)| rs.iter().map(move |&r| (l, r)))
+        {
+            let w = self.inverse_rf(r).expect("r should have write");
+            self.scpl.insert(loc, w, r).ok()?;
         }
 
         // Saturate first
+        let mut changed = true;
         while changed {
             changed = false;
 
             for loc in 0..self.reads_per_location.len() {
-                for &r_1 in &self.reads_per_location[loc] {
-                    // Find w_x [rf] r_x [SCPL^-1] w'_x
-                    for &w_2 in &self.writes_per_location[loc] {
-                        if !self.scpl_order.query(w_2, r_1) {
+                for &w_1 in &self.writes_per_location[loc] {
+                    for &r in &self.reads_per_location[loc] {
+                        // Find w_x [SCPL] r_x [rf^-1] w'_x
+                        let w_2 = self.inverse_rf(r).expect("r_1 should have write");
+                        if w_1 == w_2 || !self.scpl.query(loc, w_1, r) {
                             continue;
                         }
-                        let w_1 = self.inverse_rf(r_1).expect("r_1 should have write");
-                        if w_1 == w_2 {
-                            continue;
-                        }
-                        changed |= insert_scpl(
-                            &self.exec,
-                            &mut self.scpl_order,
-                            &mut self.edges_inserted,
-                            w_1,
-                            w_2,
-                        )
-                        .ok()?;
+                        changed |= self.scpl.insert(loc, w_1, w_2).ok()?;
                     }
                 }
 
@@ -576,20 +541,13 @@ impl CheckableExecution for SaturatingExecution {
                     }
 
                     for (w_1, w_2) in inserts.drain(..) {
-                        changed |= insert_scpl(
-                            &self.exec,
-                            &mut self.scpl_order,
-                            &mut self.edges_inserted,
-                            w_1,
-                            w_2,
-                        )
-                        .ok()?;
+                        changed |= self.scpl.insert(loc, w_1, w_2).ok()?;
                     }
                 }
             }
         }
 
-        if !acyclic(self.num_events(), |e| self.ec(e)) {
+        if !self.is_consistent() {
             return None;
         }
 
@@ -597,22 +555,7 @@ impl CheckableExecution for SaturatingExecution {
         let num_threads = self.exec.thread_starts.len();
         let mut mos = vec![];
         for loc in 0..self.exec.num_locations {
-            let mut writes = vec![vec![]; num_threads];
-            let mut thread = 0;
-            for w in self
-                .exec
-                .events
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| e.location == loc && e.event_type == EventType::Write)
-                .map(|(i, _)| i as EventId)
-            {
-                if w >= self.exec.thread_end(thread) {
-                    thread += 1;
-                }
-                writes[thread].push(w);
-            }
-
+            let writes = self.writes_per_thread_per_location[loc].clone();
             // Precompute the index of the first reachable write from each write for each
             // thread.
             let first_reachable: FxHashMap<(usize, usize, usize), usize> = writes
@@ -622,8 +565,10 @@ impl CheckableExecution for SaturatingExecution {
                 .flatten()
                 .cartesian_product(0..num_threads)
                 .map(|((i, j, w), th)| {
-                    let first_event = self.exec.thread_starts[th]
-                        .saturating_add(self.scpl_order.first_reachable(w, th) as EventId);
+                    let first_event = self
+                        .scpl
+                        .first_reachable(loc, w, th)
+                        .unwrap_or(EventId::MAX);
                     let first_write = writes[th].binary_search(&first_event).unwrap_or_else(|e| e);
                     ((i, j, th), first_write)
                 })
@@ -638,6 +583,7 @@ impl CheckableExecution for SaturatingExecution {
 
         // Try all possible combinations of total orders
         for mo in mos.into_iter().multi_cartesian_product() {
+            self.exec.linearizations_checked += 1;
             self.exec.mo = TotalOrderUnion { orders: mo };
             if self.is_consistent() {
                 return Some(self.exec.mo.clone());
@@ -645,6 +591,65 @@ impl CheckableExecution for SaturatingExecution {
         }
 
         None
+    }
+
+    fn linearizations_checked(&self) -> usize {
+        self.exec.linearizations_checked()
+    }
+}
+
+struct Scpl {
+    orders: Vec<PartialOrder>,
+    inserted: usize,
+}
+
+impl Scpl {
+    fn new(events_per_thread_per_location: Vec<Vec<Vec<EventId>>>) -> Self {
+        let mut orders: Vec<_> = events_per_thread_per_location
+            .clone()
+            .into_iter()
+            .map(PartialOrder::new)
+            .collect();
+
+        // Ensure that initial writes can see other threads
+        for (loc, order) in orders.iter_mut().enumerate() {
+            // Find the first event of location loc in each thread
+            for &first_event in events_per_thread_per_location[loc][1..]
+                .iter()
+                .filter_map(|es| es.first())
+            {
+                order
+                    .insert(loc as EventId, first_event)
+                    .expect("Initial writes to other threads should not cause cycles");
+            }
+        }
+
+        Self {
+            orders,
+            inserted: 0,
+        }
+    }
+
+    fn query(&self, loc: usize, e_1: EventId, e_2: EventId) -> bool {
+        self.orders[loc].query(e_1, e_2)
+    }
+
+    fn first_reachable(&self, loc: usize, e: EventId, thread: usize) -> Option<EventId> {
+        self.orders[loc].first_reachable(e, thread)
+    }
+
+    fn insert(
+        &mut self,
+        loc: usize,
+        e_1: EventId,
+        e_2: EventId,
+    ) -> Result<bool, PartialOrderCycleError> {
+        let order = &mut self.orders[loc];
+        if order.query(e_1, e_2) {
+            return Ok(false);
+        }
+        self.inserted += 1;
+        order.insert(e_1, e_2).map(|_| true)
     }
 }
 
