@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 /// A generic minimum suffix Fenwick tree.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MinFenwickTree<T> {
     data: Vec<T>,
     values: Vec<T>,
@@ -9,7 +9,7 @@ pub struct MinFenwickTree<T> {
 
 impl<T> MinFenwickTree<T>
 where
-    T: Copy + Ord,
+    T: Copy + Ord + std::fmt::Debug,
 {
     /// Builds a minimum suffix Fenwick tree from the given sequence.
     pub fn build<I>(into_iter: I) -> Self
@@ -34,7 +34,12 @@ where
     /// # Panics
     /// Panics if `i >= n`.
     pub fn query(&self, i: usize) -> T {
-        let mut i = self.data.len() - i;
+        let n = self.data.len();
+        if i >= n {
+            panic!("Attempt to query index {i} in a tree of length {n}.");
+        }
+
+        let mut i = n - i;
         let mut res = self.data[i - 1];
         i &= i - 1;
 

@@ -134,9 +134,9 @@ fn main() -> anyhow::Result<()> {
     println!("Naive consistency check took {} ms", elapsed.as_millis());
     println!("Naive consistency check result: {is_consistent:?}\n");
 
-    let mut exec = SaturatingExecution::from(exec);
     println!("Running consistency check with saturation...");
     let start = Instant::now();
+    let mut exec = SaturatingExecution::from(exec);
     let is_consistent = exec.is_totally_consistent();
     let elapsed = start.elapsed();
     println!(
@@ -144,6 +144,7 @@ fn main() -> anyhow::Result<()> {
         elapsed.as_millis()
     );
     println!("Consistency check with saturation result: {is_consistent:?}");
+    println!("Inserted {} edge(s) with saturation", exec.edges_inserted);
 
     Ok(())
 }

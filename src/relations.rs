@@ -11,6 +11,59 @@ pub type EventRelation = FxHashMap<EventId, RoaringBitmap>;
 
 pub trait Relation {
     fn successors(&self, event_id: EventId, events: &[Event]) -> impl Iterator<Item = EventId>;
+
+    fn transitive<'r, 'e>(self, event_id: EventId, events: &'e [Event]) -> TransitiveIter<'e, Self>
+    where
+        Self: Sized,
+    {
+        TransitiveIter {
+            relation: self,
+            events,
+            seen: RoaringBitmap::new(),
+            stack: vec![event_id],
+            start: event_id,
+        }
+    }
+}
+
+pub struct TransitiveIter<'e, R> {
+    relation: R,
+    events: &'e [Event],
+    seen: RoaringBitmap,
+    stack: Vec<EventId>,
+    start: EventId,
+}
+
+impl<R: Relation> Iterator for TransitiveIter<'_, R> {
+    type Item = EventId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(event_id) = self.stack.pop() {
+            if self.seen.contains(event_id as u32) {
+                continue;
+            }
+
+            self.seen.insert(event_id as u32);
+            self.stack
+                .extend(self.relation.successors(event_id, self.events));
+
+            if event_id != self.start {
+                return Some(event_id);
+            }
+        }
+
+        None
+    }
+}
+
+impl<I, F> Relation for F
+where
+    I: Iterator<Item = EventId>,
+    F: Fn(EventId) -> I,
+{
+    fn successors(&self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
+        self(event_id)
+    }
 }
 
 impl Relation for EventRelation {
@@ -83,8 +136,8 @@ impl PartialOrder {
             .map(|(&start, &end)| end as usize - start as usize)
             .collect_vec();
         let mut edges = vec![vec![]; num_threads];
-        for i1 in 0..num_threads {
-            for (i2, &len) in thread_lengths.iter().enumerate() {
+        for (i1, &len) in thread_lengths.iter().enumerate() {
+            for i2 in 0..num_threads {
                 if i1 == i2 {
                     // Edges to the same thread point to the next event, or usize::MAX for
                     // the last event. This makes sure that events can reach other events
