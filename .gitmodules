@@ -1,0 +1,3 @@
+[submodule "proofs/hahn"]
+	path = proofs/hahn
+	url = git@github.com:vafeiadis/hahn.git
