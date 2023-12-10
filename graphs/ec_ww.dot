@@ -1,0 +1,33 @@
+digraph g {
+    ry0_0 [type = R;loc = 1;th = 0;idx = 0;label = "R y";shape = plain;];
+    wx0_0 [type = W;loc = 0;th = 0;idx = 1;label = "W x";shape = plain;];
+    wx0_1 [type = W;loc = 0;th = 1;idx = 0;label = "W x";shape = plain;];
+    wy0_1 [type = W;loc = 1;th = 1;idx = 1;label = "W y";shape = plain;];
+    wx0_1 -> wy0_1 [label = "po";];
+    ry0_0 -> wx0_0 [label = "po";];
+    wy0_1 -> ry0_0 [from_th = 1; to_th = 0; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    ry1_0 [type = R;loc = 1;th = 2;idx = 0;label = "R y";shape = plain;];
+    wx1_0 [type = W;loc = 0;th = 2;idx = 1;label = "W x";shape = plain;];
+    wx1_1 [type = W;loc = 0;th = 3;idx = 0;label = "W x";shape = plain;];
+    wy1_1 [type = W;loc = 1;th = 3;idx = 1;label = "W y";shape = plain;];
+    wx1_1 -> wy1_1 [label = "po";];
+    ry1_0 -> wx1_0 [label = "po";];
+    wy1_1 -> ry1_0 [from_th = 3; to_th = 2; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    ry2_0 [type = R;loc = 1;th = 4;idx = 0;label = "R y";shape = plain;];
+    wx2_0 [type = W;loc = 0;th = 4;idx = 1;label = "W x";shape = plain;];
+    wx2_1 [type = W;loc = 0;th = 5;idx = 0;label = "W x";shape = plain;];
+    wy2_1 [type = W;loc = 1;th = 5;idx = 1;label = "W y";shape = plain;];
+    wx2_1 -> wy2_1 [label = "po";];
+    ry2_0 -> wx2_0 [label = "po";];
+    wy2_1 -> ry2_0 [from_th = 5; to_th = 4; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    ry3_0 [type = R;loc = 1;th = 6;idx = 0;label = "R y";shape = plain;];
+    wx3_0 [type = W;loc = 0;th = 6;idx = 1;label = "W x";shape = plain;];
+    wx3_1 [type = W;loc = 0;th = 7;idx = 0;label = "W x";shape = plain;];
+    wy3_1 [type = W;loc = 1;th = 7;idx = 1;label = "W y";shape = plain;];
+    wx3_1 -> wy3_1 [label = "po";];
+    ry3_0 -> wx3_0 [label = "po";];
+    wy3_1 -> ry3_0 [from_th = 7; to_th = 6; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+}

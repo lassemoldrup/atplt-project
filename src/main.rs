@@ -10,6 +10,7 @@ use graphviz_rust::dot_structures::{self, Graph};
 
 mod executions;
 pub use executions::*;
+use itertools::Itertools;
 mod fenwick;
 mod iter;
 mod relations;
@@ -24,6 +25,9 @@ struct App {
     /// Whether to skip the naive consistency check.
     #[clap(short, long, default_value = "false")]
     no_naive: bool,
+    /// Whether to print results as JSON, cannot be used with naive enabled.
+    #[clap(short = 'M', long, default_value = "false")]
+    machine_readable: bool,
 }
 
 #[derive(ValueEnum, Clone)]
@@ -37,10 +41,18 @@ enum Mode {
 
 fn main() -> anyhow::Result<()> {
     let app = App::parse();
-    let graph = graphviz_rust::parse(&fs::read_to_string(&app.graph)?).map_err(|e| anyhow!(e))?;
+    let input_string = fs::read_to_string(&app.graph)?
+        .split('\n')
+        .filter(|s| !s.ends_with("[label=\"po\"];"))
+        .join("\n");
+    let graph = graphviz_rust::parse(&input_string).map_err(|e| anyhow!(e))?;
     let Graph::DiGraph { stmts, .. } = graph else {
         bail!("Graph is not a digraph");
     };
+
+    if !app.no_naive && app.machine_readable {
+        bail!("Cannot use both naive and machine readable together")
+    }
 
     let mut events: Vec<Vec<(usize, Event)>> = Vec::new();
     let mut rf_edges = Vec::new();
@@ -134,7 +146,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut linearization_checked = 0;
     if app.no_naive {
-        println!("Skipping naive consistency check");
+        if !app.machine_readable {
+            println!("Skipping naive consistency check");
+        }
     } else {
         println!("Running naive consistency check...");
         let start = Instant::now();
@@ -142,23 +156,37 @@ fn main() -> anyhow::Result<()> {
         let elapsed = start.elapsed();
         linearization_checked = exec.linearizations_checked();
         println!("Naive consistency check took {} ms", elapsed.as_millis());
-        println!("Naive consistency check result: {is_consistent:?}");
+        match is_consistent {
+            Some(result) => println!("Naive consistency check result: {result}"),
+            None => println!("Naive consistency check result: No result"),
+        };
         println!("Checked {linearization_checked} linearization(s)\n");
     }
 
-    println!("Running consistency check with saturation...");
+    if !app.machine_readable {
+        println!("Running consistency check with saturation...");
+    }
     let start = Instant::now();
     let mut exec = SaturatingExecution::from(exec);
     let is_consistent = exec.is_totally_consistent();
     let elapsed = start.elapsed();
     linearization_checked = exec.linearizations_checked() - linearization_checked;
-    println!(
-        "Consistency check with saturation took {} ms",
-        elapsed.as_millis()
-    );
-    println!("Consistency check with saturation result: {is_consistent:?}");
-    println!("Checked {linearization_checked} linearization(s)");
-    println!("Inserted {} edge(s) with saturation", exec.edges_inserted());
+    if !app.machine_readable {
+        println!(
+            "Consistency check with saturation took {} ms",
+            elapsed.as_millis()
+        );
+        match is_consistent {
+            Some(result) => println!("Consistency check with saturation result: {result}"),
+            None => println!("Consistency check with saturation result: No result"),
+        };
+        println!("Checked {linearization_checked} linearization(s)");
+        println!("Inserted {} edge(s) with saturation", exec.edges_inserted());
+    } else {
+        let is_consistent_bool = is_consistent.is_some();
+        let edges_inserted = exec.edges_inserted();
+        println!("{{\"consistent\": {is_consistent_bool}, \"checked_linearizations\": {linearization_checked}, \"saturation_inserted_edges\": {edges_inserted}}}");
+    }
 
     Ok(())
 }

@@ -1,0 +1,41 @@
+digraph g {
+    wx0_0 [type = W;loc = 0;th = 0;idx = 0;label = "W x";shape = plain;];
+    wx0_1 [type = W;loc = 0;th = 1;idx = 0;label = "W x";shape = plain;];
+    wy0_1 [type = W;loc = 1;th = 1;idx = 1;label = "W y";shape = plain;];
+    ry0_2 [type = R;loc = 1;th = 2;idx = 0;label = "R y";shape = plain;];
+    rx0_2 [type = R;loc = 0;th = 2;idx = 1;label = "R x";shape = plain;];
+    wx0_1 -> wy0_1 [label = "po";];
+    ry0_2 -> rx0_2 [label = "po";];
+    wy0_1 -> ry0_2 [from_th = 1; to_th = 2; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    wx0_0 -> rx0_2 [from_th = 0; to_th = 2; from_idx = 0; to_idx = 1; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    wx1_0 [type = W;loc = 0;th = 3;idx = 0;label = "W x";shape = plain;];
+    wx1_1 [type = W;loc = 0;th = 4;idx = 0;label = "W x";shape = plain;];
+    wy1_1 [type = W;loc = 1;th = 4;idx = 1;label = "W y";shape = plain;];
+    ry1_2 [type = R;loc = 1;th = 5;idx = 0;label = "R y";shape = plain;];
+    rx1_2 [type = R;loc = 0;th = 5;idx = 1;label = "R x";shape = plain;];
+    wx1_1 -> wy1_1 [label = "po";];
+    ry1_2 -> rx1_2 [label = "po";];
+    wy1_1 -> ry1_2 [from_th = 4; to_th = 5; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    wx1_0 -> rx1_2 [from_th = 3; to_th = 5; from_idx = 0; to_idx = 1; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    wx2_0 [type = W;loc = 0;th = 6;idx = 0;label = "W x";shape = plain;];
+    wx2_1 [type = W;loc = 0;th = 7;idx = 0;label = "W x";shape = plain;];
+    wy2_1 [type = W;loc = 1;th = 7;idx = 1;label = "W y";shape = plain;];
+    ry2_2 [type = R;loc = 1;th = 8;idx = 0;label = "R y";shape = plain;];
+    rx2_2 [type = R;loc = 0;th = 8;idx = 1;label = "R x";shape = plain;];
+    wx2_1 -> wy2_1 [label = "po";];
+    ry2_2 -> rx2_2 [label = "po";];
+    wy2_1 -> ry2_2 [from_th = 7; to_th = 8; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    wx2_0 -> rx2_2 [from_th = 6; to_th = 8; from_idx = 0; to_idx = 1; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    
+    wx3_0 [type = W;loc = 0;th = 9;idx = 0;label = "W x";shape = plain;];
+    wx3_1 [type = W;loc = 0;th = 10;idx = 0;label = "W x";shape = plain;];
+    wy3_1 [type = W;loc = 1;th = 10;idx = 1;label = "W y";shape = plain;];
+    ry3_2 [type = R;loc = 1;th = 11;idx = 0;label = "R y";shape = plain;];
+    rx3_2 [type = R;loc = 0;th = 11;idx = 1;label = "R x";shape = plain;];
+    wx3_1 -> wy3_1 [label = "po";];
+    ry3_2 -> rx3_2 [label = "po";];
+    wy3_1 -> ry3_2 [from_th = 10; to_th = 11; from_idx = 1; to_idx = 0; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+    wx3_0 -> rx3_2 [from_th = 9; to_th = 11; from_idx = 0; to_idx = 1; constraint = false; style = dashed; label = "rf"; fontcolor = blue; color = blue;];
+}

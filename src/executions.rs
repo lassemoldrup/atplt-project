@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug, Display};
 use std::iter;
+use std::rc::Rc;
 
 use crate::iter::Linearizations;
 use crate::relations::{
@@ -338,7 +339,11 @@ impl CheckableExecution for NaiveExecution {
                 writes[thread].push(w);
             }
 
-            let permutations = writes.into_iter().linearizations().map(TotalOrder::new);
+            let permutations = writes
+                .into_iter()
+                .linearizations()
+                .map(TotalOrder::new)
+                .map(Rc::new);
             mos.push(permutations);
         }
 
@@ -577,7 +582,8 @@ impl CheckableExecution for SaturatingExecution {
             let permutations = writes
                 .into_iter()
                 .linearizations_with(move |i, j, th| first_reachable[&(i, j, th)])
-                .map(TotalOrder::new);
+                .map(TotalOrder::new)
+                .map(Rc::new);
             mos.push(permutations);
         }
 
@@ -761,7 +767,10 @@ mod tests {
         exec.add_rf(4, 3);
 
         exec.mo = TotalOrderUnion {
-            orders: vec![TotalOrder::new(vec![0, 2]), TotalOrder::new(vec![1, 4])],
+            orders: vec![
+                Rc::new(TotalOrder::new(vec![0, 2])),
+                Rc::new(TotalOrder::new(vec![1, 4])),
+            ],
         };
 
         assert!(exec.is_consistent());

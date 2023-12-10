@@ -1,4 +1,6 @@
+use std::fmt::{Debug, Display};
 use std::iter;
+use std::rc::Rc;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
@@ -88,6 +90,12 @@ impl TotalOrder {
     }
 }
 
+impl Display for TotalOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.order, f)
+    }
+}
+
 impl Relation for TotalOrder {
     fn successors<'a>(&'a self, event_id: EventId, _: &[Event]) -> impl Iterator<Item = EventId> {
         self.indices
@@ -101,7 +109,16 @@ impl Relation for TotalOrder {
 
 #[derive(Clone, Default, Debug)]
 pub struct TotalOrderUnion {
-    pub orders: Vec<TotalOrder>,
+    pub orders: Vec<Rc<TotalOrder>>,
+}
+
+impl Display for TotalOrderUnion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for to in &self.orders {
+            Display::fmt(&to, f)?;
+        }
+        Ok(())
+    }
 }
 
 impl Relation for TotalOrderUnion {
