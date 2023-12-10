@@ -1,0 +1,6 @@
+digraph g {
+  n0_0 [type=R,loc=3,th=0,idx=0,label="R x3 0",pos="0,0!",shape=plain];
+  n3_0 [type=R,loc=2,th=3,idx=0,label="R x2 0",pos="3,0!",shape=plain];
+  n2_0 [type=R,loc=0,th=2,idx=0,label="R x0 0",pos="2,0!",shape=plain];
+  n1_0 [type=R,loc=2,th=1,idx=0,label="R x2 0",pos="1,0!",shape=plain];
+}

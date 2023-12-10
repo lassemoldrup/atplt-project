@@ -1,0 +1,30 @@
+digraph g {
+  n0_1 [type=W,loc=2,th=0,idx=1,label="W x2 6",pos="0,-1!",shape=plain];
+  n2_4 [type=W,loc=1,th=2,idx=4,label="W x1 9",pos="2,-4!",shape=plain];
+  n2_0 [type=W,loc=3,th=2,idx=0,label="W x3 3",pos="2,0!",shape=plain];
+  n2_6 [type=R,loc=0,th=2,idx=6,label="R x0 8",pos="2,-6!",shape=plain];
+  n2_1 [type=W,loc=1,th=2,idx=1,label="W x1 5",pos="2,-1!",shape=plain];
+  n3_1 [type=W,loc=1,th=3,idx=1,label="W x1 10",pos="3,-1!",shape=plain];
+  n1_0 [type=W,loc=1,th=1,idx=0,label="W x1 2",pos="1,0!",shape=plain];
+  n0_0 [type=W,loc=3,th=0,idx=0,label="W x3 1",pos="0,0!",shape=plain];
+  n2_3 [type=W,loc=0,th=2,idx=3,label="W x0 8",pos="2,-3!",shape=plain];
+  n0_3 [type=W,loc=1,th=0,idx=3,label="W x1 13",pos="0,-3!",shape=plain];
+  n2_2 [type=W,loc=0,th=2,idx=2,label="W x0 7",pos="2,-2!",shape=plain];
+  n3_0 [type=W,loc=0,th=3,idx=0,label="W x0 4",pos="3,0!",shape=plain];
+  n3_2 [type=R,loc=2,th=3,idx=2,label="R x2 12",pos="3,-2!",shape=plain];
+  n0_2 [type=W,loc=2,th=0,idx=2,label="W x2 12",pos="0,-2!",shape=plain];
+  n2_5 [type=W,loc=2,th=2,idx=5,label="W x2 11",pos="2,-5!",shape=plain];
+  n2_4 -> n2_5 [label="po"];
+  n3_0 -> n3_1 [label="po"];
+  n0_0 -> n0_1 [label="po"];
+  n2_3 -> n2_4 [label="po"];
+  n2_5 -> n2_6 [label="po"];
+  n2_2 -> n2_3 [label="po"];
+  n3_1 -> n3_2 [label="po"];
+  n2_1 -> n2_2 [label="po"];
+  n0_2 -> n0_3 [label="po"];
+  n0_1 -> n0_2 [label="po"];
+  n2_0 -> n2_1 [label="po"];
+  n0_2 -> n3_2 [from_th=0,to_th=3,from_idx=2,to_idx=2,constraint=false,style=dashed,label="rf",fontcolor=blue,color=blue];
+  n2_3 -> n2_6 [from_th=2,to_th=2,from_idx=3,to_idx=6,constraint=false,style=dashed,label="rf",fontcolor=blue,color=blue];
+}

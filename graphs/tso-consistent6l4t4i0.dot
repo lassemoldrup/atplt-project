@@ -1,0 +1,10 @@
+digraph g {
+  n2_1 [type=R,loc=0,th=2,idx=1,label="R x0 0",pos="2,-1!",shape=plain];
+  n3_0 [type=W,loc=2,th=3,idx=0,label="W x2 3",pos="3,0!",shape=plain];
+  n3_1 [type=W,loc=3,th=3,idx=1,label="W x3 4",pos="3,-1!",shape=plain];
+  n1_0 [type=W,loc=2,th=1,idx=0,label="W x2 1",pos="1,0!",shape=plain];
+  n0_0 [type=R,loc=3,th=0,idx=0,label="R x3 0",pos="0,0!",shape=plain];
+  n2_0 [type=W,loc=1,th=2,idx=0,label="W x1 2",pos="2,0!",shape=plain];
+  n3_0 -> n3_1 [label="po"];
+  n2_0 -> n2_1 [label="po"];
+}
