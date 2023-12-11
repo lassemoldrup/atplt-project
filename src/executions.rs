@@ -499,7 +499,7 @@ impl CheckableExecution for SaturatingExecution {
             .flat_map(|(l, rs)| rs.iter().map(move |&r| (l, r)))
         {
             let w = self.inverse_rf(r).expect("r should have write");
-            self.scpl.insert(loc, w, r).ok()?;
+            self.scpl.insert_no_count(loc, w, r).ok()?;
         }
 
         // Saturate first
@@ -650,11 +650,23 @@ impl Scpl {
         e_1: EventId,
         e_2: EventId,
     ) -> Result<bool, PartialOrderCycleError> {
+        let did_insert = self.insert_no_count(loc, e_1, e_2)?;
+        if did_insert {
+            self.inserted += 1;
+        }
+        Ok(did_insert)
+    }
+
+    fn insert_no_count(
+        &mut self,
+        loc: usize,
+        e_1: EventId,
+        e_2: EventId,
+    ) -> Result<bool, PartialOrderCycleError> {
         let order = &mut self.orders[loc];
         if order.query(e_1, e_2) {
             return Ok(false);
         }
-        self.inserted += 1;
         order.insert(e_1, e_2).map(|_| true)
     }
 }
